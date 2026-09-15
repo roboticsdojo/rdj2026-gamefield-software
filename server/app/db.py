@@ -24,4 +24,7 @@ def get_db():
         password=os.environ["GAMEFIELD_DB_PASSWORD"],
         cursor_factory=psycopg2.extras.RealDictCursor,
     )
-    return conn
+    try:
+        yield conn  # FastAPI hands this connection to your route/dependency here
+    finally:
+        conn.close()  # FastAPI automatically runs this when the request finishes!
