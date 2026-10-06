@@ -1,100 +1,175 @@
-from typing import Optional  # FIXED: Missing import added
-from fastapi import FastAPI, HTTPException, Response, WebSocket, WebSocketDisconnect, Depends, Cookie  # FIXED: Cookie added
-from app.auth import verify_password, create_session 
-from app.db import get_db 
-from app.models import GamefieldCommand, LoginRequest 
+import asyncio
+import threading
+from contextlib import asynccontextmanager
+from typing import Optional
+
+from fastapi import FastAPI, HTTPException, Response, WebSocket, WebSocketDisconnect, Depends, Cookie
+from app.auth import verify_password, create_session
+from app.db import get_db
+from app.models import GamefieldCommand, LoginRequest
 from .connection_manager import GamefieldIOManager
 
-app = FastAPI(title="Gamefield Server")
+import rclpy
+from rclpy.node import Node
+from gamefield_server_interfaces.srv import DisplayImage
+
+
+class FastAPIInterfaceNode(Node):
+    """Isolated ROS 2 node running a service client alongside FastAPI."""
+    def __init__(self):
+        super().__init__('fastapi_ros2_interface_bridge')
+        self.cli = self.create_client(DisplayImage, '/gamefield/display_image')
+
+    def call_display_service(self, image_name: str, timeout: float = 5.0):
+        if not self.cli.service_is_ready():
+            return {"success": False, "message": "Pi ROS 2 display service not yet available"}
+
+        req = DisplayImage.Request()
+        req.image_name = image_name
+
+        future = self.cli.call_async(req)
+        done_event = threading.Event()
+        future.add_done_callback(lambda _f: done_event.set())
+
+        if not done_event.wait(timeout=timeout):
+            return {"success": False, "message": f"No response from display service within {timeout}s"}
+
+        result = future.result()
+        return {"success": result.success, "message": result.message}
+
+
+ros_node = None
+ros_thread = None
+
+
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    global ros_node, ros_thread
+    rclpy.init()
+    ros_node = FastAPIInterfaceNode()
+    ros_thread = threading.Thread(target=lambda: rclpy.spin(ros_node), daemon=True)
+    ros_thread.start()
+    yield
+    ros_node.destroy_node()
+    rclpy.shutdown()
+    ros_thread.join()
+
+
+app = FastAPI(title="Gamefield Server", lifespan=lifespan)
 manager = GamefieldIOManager()
+
 
 @app.websocket("/ws/gamefield-io")
 async def gamefield_io_socket(websocket: WebSocket, token: str = ""):
     connected = await manager.connect(websocket, token)
     if not connected:
         return
-
     try:
         while True:
             raw_message = await websocket.receive_text()
             await manager.handle_incoming(raw_message)
     except WebSocketDisconnect:
         await manager.disconnect(websocket)
-  
+
+
 async def _dispatch(target: str, command: GamefieldCommand) -> dict:
     if not manager.connected:
         raise HTTPException(status_code=503, detail="No gamefield IO client connected")
-
     message = {"target": target, "action": command.action, "payload": command.payload}
     try:
         return await manager.send_command(message)
     except TimeoutError as exc:
         raise HTTPException(status_code=504, detail=str(exc))
 
+
 @app.post("/gamefield/loading")
 async def control_loading(command: GamefieldCommand):
     return await _dispatch("loading", command)
+
 
 @app.post("/gamefield/barrier")
 async def control_barrier(command: GamefieldCommand):
     return await _dispatch("barrier", command)
 
+
 @app.post("/gamefield/screen")
 async def control_screen(command: GamefieldCommand):
-    return await _dispatch("screen", command)
+    global ros_node
+    if ros_node is None:
+        raise HTTPException(status_code=500, detail="ROS 2 client node not initialized")
+
+    image_id = command.payload.get("image_id") if isinstance(command.payload, dict) else None
+    if not image_id:
+        raise HTTPException(status_code=400, detail="payload must include 'image_id'")
+
+    conn = get_db()
+    cur = conn.cursor()
+    cur.execute("SELECT filename FROM image_assets WHERE id = %s", (image_id,))
+    asset_record = cur.fetchone()
+    conn.close()
+
+    if not asset_record:
+        raise HTTPException(status_code=404, detail=f"image asset id {image_id} not found")
+
+    target_filename = asset_record["filename"]
+
+    loop = asyncio.get_running_loop()
+    ros_result = await loop.run_in_executor(None, ros_node.call_display_service, target_filename)
+
+    if not ros_result["success"]:
+        raise HTTPException(status_code=502, detail=ros_result["message"])
+
+    return {"status": "synchronized", "filename": target_filename, "detail": ros_result["message"]}
+
 
 @app.post("/gamefield/audience_screen")
 async def control_audience_screen(command: GamefieldCommand):
     return await _dispatch("audience_screen", command)
 
+
 @app.get("/gamefield/status")
 async def gamefield_status():
-    return {"io_client_connected": manager.connected}  
+    return {"io_client_connected": manager.connected}
+
 
 @app.post("/auth/login")
-async def login(
-    credentials: LoginRequest, 
-    response: Response,
-    conn = Depends(get_db)  
-):
+async def login(credentials: LoginRequest, response: Response):
+    conn = get_db()
     cur = conn.cursor()
     cur.execute(
-        "SELECT judge_id, password_hash FROM judges WHERE username = %s", 
-        (credentials.username,)
+        "SELECT judge_id, password_hash FROM judges WHERE username = %s",
+        (credentials.username,),
     )
     judge = cur.fetchone()
+    conn.close()
 
     if not judge or not verify_password(credentials.password, judge["password_hash"]):
         raise HTTPException(status_code=401, detail="Invalid username or password")
 
-    session_id, expires_at = create_session(judge["judge_id"], conn)
-    
+    session_id, expires_at = create_session(judge["judge_id"])
+
     response.set_cookie(
-        key="session_id", 
-        value=session_id,  
+        key="session_id",
+        value=session_id,
         httponly=True,
-        secure=True,       
-        samesite="lax",    
-        expires=expires_at
+        samesite="lax",
+        expires=expires_at,
     )
     return {"logged_in": True}
 
+
 @app.post("/auth/logout")
-async def logout(
-    response: Response,
-    session_id: Optional[str] = Cookie(default=None),
-    conn = Depends(get_db)
-):
+async def logout(response: Response, session_id: Optional[str] = Cookie(default=None)):
     if session_id:
+        conn = get_db()
         cur = conn.cursor()
         cur.execute("DELETE FROM sessions WHERE session_id = %s", (session_id,))
         conn.commit()
-
-    response.delete_cookie(
-        key="session_id",
-        httponly=True,
-        secure=True,       
-        samesite="lax"
-    )
-    
+        conn.close()
+    response.delete_cookie(key="session_id")
     return {"logged_out": True}
+
+
+if __name__ == "__main__":
+    import uvicorn
+    uvicorn.run(app, host="0.0.0.0", port=8000)
