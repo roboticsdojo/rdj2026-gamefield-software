@@ -1,0 +1,125 @@
+"""
+display_node.py
+
+ROS 2 service node running on the Pi. Hosts /gamefield/display_image,
+looks up the requested image against a local asset directory, and
+pushes it to display.html over the local WebSocket relay.
+
+Images are sent as base64 data URIs directly in the WebSocket
+message — not as file paths — so no second local HTTP server is
+needed just to serve static files; the browser never fetches
+anything separately.
+"""
+
+import asyncio
+import base64
+import json
+import mimetypes
+import os
+import threading
+
+import rclpy
+from rclpy.node import Node
+import websockets
+
+from gamefield_server_interfaces.srv import DisplayImage
+
+ASSET_DIR = os.path.expanduser("~/gamefield-assets")
+
+
+class DisplayRelay:
+    """Owns the local WebSocket server that display.html connects to."""
+
+    def __init__(self):
+        self.clients = set()
+        self.loop = None
+
+    async def handler(self, websocket):
+        self.clients.add(websocket)
+        try:
+            async for _ in websocket:
+                pass
+        finally:
+            self.clients.discard(websocket)
+
+    async def _broadcast(self, message: dict):
+        if not self.clients:
+            return
+        payload = json.dumps(message)
+        await asyncio.gather(*(ws.send(payload) for ws in self.clients))
+
+    def broadcast_threadsafe(self, message: dict):
+        if self.loop is None:
+            return
+        asyncio.run_coroutine_threadsafe(self._broadcast(message), self.loop)
+
+    async def run(self, host="localhost", port=8765):
+        self.loop = asyncio.get_running_loop()
+        async with websockets.serve(self.handler, host, port):
+            await asyncio.Future()  # run forever
+
+
+def _load_as_data_uri(path: str) -> str:
+    mime_type, _ = mimetypes.guess_type(path)
+    mime_type = mime_type or "application/octet-stream"
+    with open(path, "rb") as f:
+        encoded = base64.b64encode(f.read()).decode("ascii")
+    return f"data:{mime_type};base64,{encoded}"
+
+
+class DisplayNode(Node):
+    def __init__(self, relay: DisplayRelay):
+        super().__init__('display_node')
+        self.relay = relay
+        self.srv = self.create_service(
+            DisplayImage, '/gamefield/display_image', self.handle_display_image
+        )
+        self.get_logger().info('display_node ready on /gamefield/display_image')
+
+    def handle_display_image(self, request, response):
+        filename = request.image_name
+        path = os.path.join(ASSET_DIR, filename)
+
+        if not os.path.isfile(path):
+            response.success = False
+            response.message = f"file not found: {path}"
+            return response
+
+        try:
+            data_uri = _load_as_data_uri(path)
+        except Exception as exc:
+            response.success = False
+            response.message = f"failed to read {filename}: {exc}"
+            return response
+
+        self.relay.broadcast_threadsafe({
+            "action": "show_item",
+            "item": {"name": filename, "waste_type": "", "image_url": data_uri},
+        })
+
+        response.success = True
+        response.message = "ok"
+        return response
+
+
+def main(args=None):
+    relay = DisplayRelay()
+
+    def run_relay():
+        asyncio.run(relay.run())
+
+    threading.Thread(target=run_relay, daemon=True).start()
+
+    rclpy.init(args=args)
+    node = DisplayNode(relay)
+    try:
+        rclpy.spin(node)
+    except KeyboardInterrupt:
+        pass
+    finally:
+        node.destroy_node()
+        rclpy.shutdown()
+
+
+if __name__ == '__main__':
+    main()
