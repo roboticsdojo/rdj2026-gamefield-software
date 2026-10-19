@@ -10,18 +10,30 @@ from datetime import datetime, timedelta, timezone
 from app.db import get_db
 from typing import Optional
 from fastapi import Cookie, HTTPException, Depends
+from passlib.exc import UnknownHashError
 
 SESSION_LIFETIME = timedelta(hours=8)  # how long a session is valid for
 
-pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
+pwd_context = CryptContext(
+    schemes=["bcrypt"], 
+    deprecated="auto"
+    )
 
 
 def hash_password(plain_password: str) -> str:
     return pwd_context.hash(plain_password)
 
 
-def verify_password(plain_password: str, password_hash: str) -> bool:
-    return pwd_context.verify(plain_password, password_hash)
+def verify_password(
+    plain_password: str, 
+    password_hash: str,
+) -> bool:
+    try:
+        return pwd_context.verify(plain_password, password_hash)
+    except (UnknownHashError, ValueError, TypeError):
+        # Handle cases where the hash is invalid or the input is malformed
+        return False
+
 
 # Explicitly define East Africa Time (UTC+3)
 EAT = timezone(timedelta(hours=3))
