@@ -1,0 +1,369 @@
+<!DOCTYPE html>
+<html lang="en" data-theme="light">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Robotics Dojo Control</title>
+    <link rel="icon" href="/logos/icon.png">
+    <link rel="stylesheet" href="/static/style.css">
+    <script>
+        // apply the saved theme before first paint (light is the default)
+        try { document.documentElement.dataset.theme = JSON.parse(localStorage.getItem('dojoTheme')) === 'dark' ? 'dark' : 'light'; } catch (e) {}
+    </script>
+</head>
+<body>
+    <!-- Icons (stroke icons, used as <svg class="ic"><use href="#i-..."/></svg>) -->
+    <svg width="0" height="0" style="position:absolute" aria-hidden="true">
+        <defs>
+            <symbol id="i-menu" viewBox="0 0 24 24"><path d="M4 6h16M4 12h16M4 18h16"/></symbol>
+            <symbol id="i-home" viewBox="0 0 24 24"><path d="M3 11l9-7 9 7v9a1 1 0 0 1-1 1h-5v-6h-6v6H4a1 1 0 0 1-1-1z"/></symbol>
+            <symbol id="i-monitor" viewBox="0 0 24 24"><rect x="3" y="4" width="18" height="12" rx="2"/><path d="M8 20h8M12 16v4"/></symbol>
+            <symbol id="i-box" viewBox="0 0 24 24"><path d="M3 7l9-4 9 4v10l-9 4-9-4z"/><path d="M3 7l9 4 9-4M12 11v10"/></symbol>
+            <symbol id="i-cone" viewBox="0 0 24 24"><path d="M9 4h6l4 15H5z"/><path d="M3 20h18M8 10h8M7 15h10"/></symbol>
+            <symbol id="i-route" viewBox="0 0 24 24"><circle cx="6" cy="19" r="2"/><circle cx="18" cy="5" r="2"/><path d="M8 19h7a3 3 0 0 0 0-6H9a3 3 0 0 1 0-6h7"/></symbol>
+            <symbol id="i-map" viewBox="0 0 24 24"><path d="M9 4L3 6v14l6-2 6 2 6-2V4l-6 2z"/><path d="M9 4v14M15 6v14"/></symbol>
+            <symbol id="i-play" viewBox="0 0 24 24"><path d="M7 4l13 8-13 8z"/></symbol>
+            <symbol id="i-stop" viewBox="0 0 24 24"><rect x="6" y="6" width="12" height="12" rx="1"/></symbol>
+            <symbol id="i-reset" viewBox="0 0 24 24"><path d="M4 12a8 8 0 1 0 3-6.2"/><path d="M4 4v4h4"/></symbol>
+            <symbol id="i-sun" viewBox="0 0 24 24"><circle cx="12" cy="12" r="4"/><path d="M12 2v2M12 20v2M2 12h2M20 12h2M5 5l1.5 1.5M17.5 17.5L19 19M5 19l1.5-1.5M17.5 6.5L19 5"/></symbol>
+            <symbol id="i-moon" viewBox="0 0 24 24"><path d="M20 14.5A8 8 0 1 1 9.5 4a6.5 6.5 0 0 0 10.5 10.5z"/></symbol>
+            <symbol id="i-check" viewBox="0 0 24 24"><path d="M5 12.5l4.5 4.5L19 7.5"/></symbol>
+            <symbol id="i-chevron" viewBox="0 0 24 24"><path d="M6 9l6 6 6-6"/></symbol>
+            <symbol id="i-x" viewBox="0 0 24 24"><path d="M6 6l12 12M18 6L6 18"/></symbol>
+            <symbol id="i-arrow" viewBox="0 0 24 24"><path d="M5 12h14M13 6l6 6-6 6"/></symbol>
+            <symbol id="i-camera" viewBox="0 0 24 24"><path d="M4 8h3l2-3h6l2 3h3v11H4z"/><circle cx="12" cy="13" r="3.5"/></symbol>
+            <symbol id="i-shuffle" viewBox="0 0 24 24"><path d="M3 7h4l10 10h4M3 17h4l3-3M14 10l3-3h4M18 4l3 3-3 3M18 14l3 3-3 3"/></symbol>
+            <symbol id="i-trophy" viewBox="0 0 24 24"><path d="M8 4h8v6a4 4 0 0 1-8 0z"/><path d="M8 6H5a3 3 0 0 0 3 4M16 6h3a3 3 0 0 1-3 4M12 14v4M8 20h8"/></symbol>
+        </defs>
+    </svg>
+
+    <!-- ===================== TOP BAR ===================== -->
+    <header class="topbar">
+        <div class="topbar-left">
+            <button class="icon-btn" id="nav-toggle" title="Collapse / expand navigation" aria-label="Toggle navigation">
+                <svg class="ic"><use href="#i-menu"/></svg>
+            </button>
+            <img class="brand-icon" src="/logos/icon.png" alt="">
+            <div class="brand">
+                <span class="brand-name">Robotics Dojo</span>
+                <span class="brand-sub">2026 · Waste Sorting Arena</span>
+            </div>
+        </div>
+
+        <div class="run-bar">
+            <span class="team-chip" id="team-chip" title="Team playing">No team</span>
+            <div class="timer" id="timer" title="Run timer">
+                <span id="timer-display">00:00.0</span>
+            </div>
+            <button class="btn btn-go" id="timer-start"><svg class="ic"><use href="#i-play"/></svg><span>Start</span></button>
+            <button class="btn btn-stop" id="timer-stop" disabled><svg class="ic"><use href="#i-stop"/></svg><span>Stop</span></button>
+        </div>
+
+        <div class="topbar-right">
+            <button class="btn btn-ghost btn-sm" id="rviz-toggle" title="Show / hide the RViz live view (works from any section)">
+                <svg class="ic"><use href="#i-monitor"/></svg><span>RViz</span><span class="rviz-dot"></span>
+            </button>
+            <button class="icon-btn small" id="theme-toggle" title="Light / dark mode" aria-label="Toggle light or dark mode">
+                <svg class="ic"><use id="theme-icon" href="#i-moon"/></svg>
+            </button>
+        </div>
+    </header>
+
+    <div class="layout">
+        <!-- ===================== SIDEBAR ===================== -->
+        <nav class="sidebar" id="sidebar" aria-label="Sections">
+            <button class="nav-item" data-section="home"><svg class="ic"><use href="#i-home"/></svg><span class="nav-text">Home</span></button>
+            <div class="nav-label nav-text">Run</div>
+            <button class="nav-item" data-section="screen"><span class="nav-step">1</span><svg class="ic"><use href="#i-monitor"/></svg><span class="nav-text">Gamefield Screen</span><svg class="ic nav-done"><use href="#i-check"/></svg></button>
+            <button class="nav-item" data-section="loading"><span class="nav-step">2</span><svg class="ic"><use href="#i-box"/></svg><span class="nav-text">Loading Station</span><svg class="ic nav-done"><use href="#i-check"/></svg></button>
+            <button class="nav-item" data-section="obstacles"><span class="nav-step">3</span><svg class="ic"><use href="#i-cone"/></svg><span class="nav-text">Dynamic Obstacles</span><svg class="ic nav-done"><use href="#i-check"/></svg></button>
+            <button class="nav-item" data-section="maps"><span class="nav-step">4</span><svg class="ic"><use href="#i-map"/></svg><span class="nav-text">Map &amp; RViz</span><svg class="ic nav-done"><use href="#i-check"/></svg></button>
+        </nav>
+
+        <div class="content">
+            <main class="main">
+
+                <!-- ===================== HOME ===================== -->
+                <section class="section" id="sec-home">
+                    <div class="hero">
+                        <img src="/logos/icon.png" alt="Robotics Dojo" class="hero-icon">
+                        <div>
+                            <h1>Robotics Dojo 2026</h1>
+                            <p class="muted">Autonomous waste detection, sorting and delivery · 3-minute autonomous phase</p>
+                        </div>
+                    </div>
+
+                    <div class="grid-2">
+                        <div class="card">
+                            <h2>Current run</h2>
+                            <label class="field">Team
+                                <!-- Teams for the competition: edit this list (separated by ;) to add or remove teams -->
+                                <select id="team-select" data-teams="Limit breakers; Malkiabots; Asterix; TetsuZakura Knights; NOMAD; jnnp robotics Innovators; Eigen; Auracle; Zingira; Saifee robotics"><option value="">Select a team…</option></select>
+                            </label>
+                            <div class="now-playing" id="now-playing">
+                                <span class="muted">Pick a team, then press Start. The timer runs at the top while you move through the sections.</span>
+                            </div>
+                            <div class="row">
+                                <button class="btn btn-go btn-lg" id="home-start"><svg class="ic"><use href="#i-play"/></svg>Start run</button>
+                                <button class="btn btn-ghost" id="home-reset" title="Discard the run being scored"><svg class="ic"><use href="#i-reset"/></svg>Discard run</button>
+                            </div>
+                            <details class="mini">
+                                <summary>Manage teams</summary>
+                                <div class="row">
+                                    <input id="team-new" type="text" maxlength="32" placeholder="New team name">
+                                    <button class="btn btn-primary" id="team-add">Add</button>
+                                </div>
+                                <div id="team-list" class="team-list"></div>
+                            </details>
+                        </div>
+
+                        <div class="card">
+                            <h2>Run progress</h2>
+                            <ol class="progress-list" id="progress-list"></ol>
+                        </div>
+                    </div>
+
+                    <div class="card">
+                        <div class="card-head">
+                            <h2><svg class="ic"><use href="#i-trophy"/></svg>Scoreboard</h2>
+                            <span class="muted small">Fastest run per team</span>
+                        </div>
+                        <div class="table-wrap">
+                            <table class="table" id="scoreboard">
+                                <thead><tr><th>#</th><th>Team</th><th class="num">Time</th><th class="num">Runs</th></tr></thead>
+                                <tbody></tbody>
+                            </table>
+                        </div>
+                        <details class="mini">
+                            <summary>All runs</summary>
+                            <div class="table-wrap">
+                                <table class="table" id="runs-table">
+                                    <thead><tr><th>When</th><th>Team</th><th class="num">Time</th><th>Detection</th><th></th></tr></thead>
+                                    <tbody></tbody>
+                                </table>
+                            </div>
+                        </details>
+                    </div>
+                </section>
+
+                <!-- ===================== 1. GAMEFIELD SCREEN ===================== -->
+                <section class="section" id="sec-screen" hidden>
+                    <div class="section-head">
+                        <h1><span class="step">1</span>Gamefield Screen &amp; Waste Detection</h1>
+                        <span class="pill" id="screen-shown">Screen: logo</span>
+                    </div>
+
+                    <div class="grid-2">
+                        <div class="card">
+                            <h2>Screen (what the robot should see)</h2>
+                            <div class="media">
+                                <img id="live-stream" data-src="http://100.76.206.127:8080/stream" alt="Gamefield screen feed">
+                            </div>
+                            <div class="class-buttons" id="class-buttons">
+                                <button class="class-btn cls-organic" data-cat="organic">Organic</button>
+                                <button class="class-btn cls-metal" data-cat="other">Metal</button>
+                                <button class="class-btn cls-plastic" data-cat="plastic">Plastic</button>
+                            </div>
+                            <div class="row">
+                                <button class="btn btn-ghost" id="screen-random"><svg class="ic"><use href="#i-shuffle"/></svg>Random class</button>
+                                <button class="btn btn-ghost" id="screen-logo">Revert to logo</button>
+                            </div>
+                            <div class="status" id="status">Ready</div>
+                        </div>
+
+                        <div class="card">
+                            <h2>Robot (detected image)</h2>
+                            <div class="media" id="robot-detection-view">
+                                <img id="det-img" alt="Robot detection" hidden>
+                                <div class="media-empty" id="det-empty"><span>No detection yet.<br>Press <b>Request detection</b> or let the robot push one.</span></div>
+                            </div>
+                            <div class="row">
+                                <button class="btn btn-primary" id="det-request"><svg class="ic"><use href="#i-camera"/></svg>Request detection</button>
+                            </div>
+                            <div class="status" id="det-status">Waiting for the robot</div>
+                        </div>
+                    </div>
+
+                    <div class="card verdict-card">
+                        <div class="verdict">
+                            <div class="verdict-cell"><span class="muted small">Displayed</span><b id="v-displayed">—</b></div>
+                            <div class="verdict-cell"><span class="muted small">Robot detected</span><b id="v-detected">—</b></div>
+                            <div class="verdict-cell"><span class="muted small">Detection time</span><b id="v-dettime">—</b></div>
+                            <button class="check-toggle" id="v-correct" aria-pressed="false">
+                                <svg class="ic"><use href="#i-check"/></svg><span>Correctly identified</span>
+                            </button>
+                        </div>
+                        <div class="row small muted">
+                            <span>Correct is ticked automatically when the robot's label matches the screen; click to override.</span>
+                            <button class="btn btn-ghost btn-sm" id="v-mark-now">Mark detected now</button>
+                        </div>
+                    </div>
+
+                    <div class="next-row"><button class="btn btn-accent" data-next="screen"><span>Confirm &amp; go to Loading Station</span><svg class="ic"><use href="#i-arrow"/></svg></button></div>
+                </section>
+
+                <!-- ===================== 2. LOADING STATION ===================== -->
+                <section class="section" id="sec-loading" hidden>
+                    <div class="section-head">
+                        <h1><span class="step">2</span>Loading Station</h1>
+                        <div class="disp-state">
+                            <span id="disp-badge" class="badge badge-offline">OFFLINE</span>
+                            <span id="disp-conn" class="muted small">waiting for loading station…</span>
+                        </div>
+                    </div>
+
+                    <div class="card">
+                        <div class="card-head">
+                            <h2>Stations</h2>
+                            <div class="row">
+                                <button id="disp-enable" class="btn btn-ghost btn-sm">Disable</button>
+                                <button id="disp-home" class="btn btn-ghost btn-sm">Home</button>
+                                <button id="disp-reset" class="btn btn-ghost btn-sm">Reset</button>
+                            </div>
+                        </div>
+                        <p class="muted small" id="disp-expected">Expected station follows the class on the screen.</p>
+                        <div class="stations">
+                            <div class="station" data-station="1"></div>
+                            <div class="station" data-station="2"></div>
+                            <div class="station" data-station="3"></div>
+                        </div>
+                        <div class="disp-progress">
+                            <span id="disp-goal">No dispense yet</span>
+                            <button id="disp-cancel" class="btn btn-stop btn-sm" disabled>Cancel</button>
+                        </div>
+                        <div class="status" id="disp-status">Ready</div>
+                    </div>
+
+                    <div class="card">
+                        <div class="card-head"><h2>Station log</h2><button class="btn btn-ghost btn-sm" id="disp-log-clear">Clear</button></div>
+                        <div class="log" id="disp-log"></div>
+                    </div>
+                    <div class="next-row"><button class="btn btn-accent" data-next="loading"><span>Confirm &amp; go to Dynamic Obstacles</span><svg class="ic"><use href="#i-arrow"/></svg></button></div>
+                </section>
+
+                <!-- ===================== 3. DYNAMIC OBSTACLES ===================== -->
+                <section class="section" id="sec-obstacles" hidden>
+                    <div class="section-head">
+                        <h1><span class="step">3</span>Dynamic Obstacles</h1>
+                        <div class="row">
+                            <label class="switch small"><input type="checkbox" id="obs-auto"> auto every <input type="number" id="obs-auto-s" min="5" max="120" value="20" class="num-input">s</label>
+                            <button class="btn btn-primary" id="obs-random"><svg class="ic"><use href="#i-shuffle"/></svg>Randomise</button>
+                            <button class="btn btn-ghost" id="obs-copy">Copy</button>
+                        </div>
+                    </div>
+                    <div class="card">
+                        <h2>Layout · 3 blocks on the 3 × 2 grid</h2>
+                        <div class="obs-grid-wrap"><div id="obs-grid" class="obs-grid"></div></div>
+                        <div class="status" id="obs-status">Press Randomise</div>
+                    </div>
+                    <div class="next-row"><button class="btn btn-stop" id="obs-stop-timer"><svg class="ic"><use href="#i-stop"/></svg><span>Stop timer &amp; go to Map</span></button></div>
+                </section>
+
+                <!-- ===================== 5. MAP & FINAL SCORE ===================== -->
+                <section class="section" id="sec-maps" hidden>
+                    <div class="section-head">
+                        <h1><span class="step">4</span>Map Request &amp; RViz Live</h1>
+                    </div>
+
+                    <div class="card">
+                        <div class="maps-request">
+                            <select id="maps-format" aria-label="Map format">
+                                <option value="pgm">PGM map</option>
+                                <option value="screenshot">RViz screenshot</option>
+                                <option value="any">Either</option>
+                                <option value="rviz_live">RViz live stream</option>
+                            </select>
+                            <input id="maps-team" type="text" maxlength="32" placeholder="Team (blank = any)">
+                            <button class="btn btn-primary" id="maps-request-btn"><svg class="ic"><use href="#i-map"/></svg><span>Request map</span></button>
+                        </div>
+                        <div id="maps-requests" class="maps-requests"></div>
+                        <div class="maps-body">
+                            <div class="media maps-viewer">
+                                <img id="maps-img" alt="Received map" hidden>
+                                <div class="media-empty" id="maps-empty"><span>No map received yet.<br>Ask the team to run <code>dojo_map.py</code> or open <code>/team</code>.</span></div>
+                            </div>
+                            <div class="maps-side">
+                                <div id="maps-meta">—</div>
+                                <div class="row" id="maps-actions"></div>
+                                <h3>History</h3>
+                                <div id="maps-history"></div>
+                            </div>
+                        </div>
+                        <div class="status" id="maps-status">Ready</div>
+                    </div>
+
+                    <div class="card">
+                        <h2>Finish run</h2>
+                        <label class="field">Notes
+                            <textarea id="run-notes" rows="2" maxlength="500" placeholder="Anything the judges want on record"></textarea>
+                        </label>
+                        <button class="btn btn-accent btn-lg full" id="finalize"><svg class="ic"><use href="#i-check"/></svg>Finalise run</button>
+                    </div>
+                </section>
+
+                <!-- ===================== TEAM UPLOAD VIEW (only at /team) ===================== -->
+                <section class="section" id="view-team" hidden>
+                    <div class="team-wrap">
+                        <div class="hero">
+                            <img src="/logos/icon.png" alt="" class="hero-icon">
+                            <div><h1>Team map upload</h1><p class="muted">Send your map or RViz screenshot to the judges.</p></div>
+                        </div>
+                        <div class="card">
+                            <label class="field">Team name <input id="team" type="text" maxlength="32" placeholder="e.g. Alpha"></label>
+                            <label class="field" id="token-row" hidden>Token <input id="token" type="password" placeholder="given by the judges"></label>
+                        </div>
+                        <div class="card">
+                            <h2>Judges' request</h2>
+                            <div id="pending" class="pending none">Checking…</div>
+                        </div>
+                        <div class="card">
+                            <h2>Send a file</h2>
+                            <p class="muted small">An RViz screenshot (.png / .jpg) or a map (.pgm).</p>
+                            <input id="file" type="file" accept=".pgm,.png,.jpg,.jpeg,image/png,image/jpeg">
+                            <img id="preview" alt="" hidden>
+                            <button id="send" class="btn btn-accent" disabled>Send to judges</button>
+                            <div id="result"></div>
+                        </div>
+                        <div class="card">
+                            <h2>Or use the terminal (Ubuntu 24.04, Pi or PC)</h2>
+                            <p class="muted small">Sends maps, detections and the camera stream straight from the robot.</p>
+                            <pre id="cmd"></pre>
+                            <button id="copy" class="btn btn-ghost">Copy commands</button>
+                        </div>
+                    </div>
+                </section>
+            </main>
+
+            <footer class="footer">
+                <img src="/logos/icon.png" alt="">
+                <span><b>Robotics Dojo</b> · Innovation at its finest</span>
+            </footer>
+        </div>
+    </div>
+
+    <!-- RViz live: floating panel, opened from the top bar (or by a request), collapsible, visible in every section -->
+    <aside class="rviz-panel" id="rviz-panel" hidden aria-label="RViz live">
+        <div class="rviz-head" id="rviz-head">
+            <span class="rviz-title">RViz live</span>
+            <span class="muted small rviz-meta" id="rviz-meta">—</span>
+            <button class="icon-btn small" id="rviz-collapse" title="Collapse / expand" aria-label="Collapse or expand"><svg class="ic"><use href="#i-chevron"/></svg></button>
+            <button class="icon-btn small" id="rviz-close" title="Close" aria-label="Close"><svg class="ic"><use href="#i-x"/></svg></button>
+        </div>
+        <div class="rviz-body" id="rviz-body">
+            <div class="media">
+                <img id="rviz-stream" alt="RViz live" hidden>
+                <div class="media-empty" id="rviz-empty"><span id="rviz-empty-text">No RViz stream yet.<br>Press <b>Request</b> to ask the team.</span></div>
+                <span class="live-dot" id="rviz-live-dot" hidden>LIVE</span>
+            </div>
+            <div class="row rviz-bar">
+                <input id="rviz-url" type="text" placeholder="or paste stream URL" class="grow">
+                <button class="btn btn-primary btn-sm" id="rviz-request">Request</button>
+                <button class="btn btn-ghost btn-sm" id="rviz-stop">Stop</button>
+            </div>
+        </div>
+    </aside>
+
+    <div id="toasts" class="toasts" aria-live="polite"></div>
+    <script src="/static/app.js"></script>
+</body>
+</html>

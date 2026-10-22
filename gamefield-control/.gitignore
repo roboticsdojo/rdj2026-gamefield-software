@@ -1,0 +1,6 @@
+build/
+.vscode/
+log/
+install/
+web_pi_bridge/web_pi_bridge/__pycache__/
+__pycache__/
