@@ -13,6 +13,13 @@
   <depend>loading_station_interfaces</depend>
   <depend>std_srvs</depend>
   <depend>action_msgs</depend>
+  <depend>example_interfaces</depend>
+  <depend>ament_index_python</depend>
+
+  <!-- web server (rosdep resolves these to apt packages on Ubuntu 22.04/24.04) -->
+  <exec_depend>python3-fastapi</exec_depend>
+  <exec_depend>python3-uvicorn</exec_depend>
+  <exec_depend>python3-pydantic</exec_depend>
 
   <test_depend>ament_copyright</test_depend>
   <test_depend>ament_flake8</test_depend>

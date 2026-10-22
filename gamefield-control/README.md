@@ -24,9 +24,14 @@ install, then:
 
 ```bash
 sudo apt update
-sudo apt install -y ros-jazzy-ros-base ros-jazzy-example-interfaces ros-jazzy-rmw-zenoh-cpp \
-                    python3-colcon-common-extensions python3-pip
-pip install --break-system-packages fastapi uvicorn
+sudo apt install ros-jazzy-rmw-zenoh-cpp
+sudo apt install -y ros-jazzy-ros-base python3-colcon-common-extensions python3-rosdep
+sudo rosdep init          # skip if already done
+rosdep update
+
+cd gamefield-control
+source /opt/ros/jazzy/setup.bash
+rosdep install --from-paths . --ignore-src -r -y
 ```
 
 | Needed | Why |

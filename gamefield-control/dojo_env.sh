@@ -1,13 +1,3 @@
-#!/usr/bin/env bash
-# Environment for the Robotics Dojo judges' web page.  SOURCE it, don't run it:
-#
-#   source dojo_env.sh on      # real Pi: rmw_zenoh_cpp, ROS_DOMAIN_ID=62
-#   source dojo_env.sh off     # no Pi:   plain DDS, isolated ROS_DOMAIN_ID=99
-#
-# Optional: PI_IP=192.168.x.y source dojo_env.sh on
-#           points this machine's zenoh at the router running on the Pi (port 7447).
-# Do this in every new terminal.
-
 REPO="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
 source /opt/ros/jazzy/setup.bash
