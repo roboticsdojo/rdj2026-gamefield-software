@@ -69,9 +69,13 @@ Maps/teams page for competitors: `http://<laptop-ip>:8000/team`.
 
 
 
-
 Quick check from the laptop to confirm networking:
 ```bash
 ros2 service list | grep -E "screen_manager|loading_station"
 curl http://localhost:8000/api/dispenser/status
 ```
+
+Issues
+- random class is only organic
+- low image quality
+- needs more images

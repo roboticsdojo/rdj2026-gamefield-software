@@ -42,6 +42,7 @@ import re
 import struct
 import threading
 import time
+import urllib.request
 import uuid
 import zlib
 from contextlib import asynccontextmanager
@@ -49,7 +50,7 @@ from pathlib import Path
 from typing import Literal, Optional
 
 from fastapi import APIRouter, FastAPI, Header, HTTPException, Request
-from fastapi.responses import FileResponse
+from fastapi.responses import FileResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
 from ament_index_python.packages import get_package_share_directory
@@ -863,6 +864,132 @@ async def get_index():
 async def get_team_page():
     # Same single page as "/"; app.js sees the /team path and shows only the team upload view.
     return await get_index()
+
+
+SCREEN_STREAM_URL = os.environ.get('DOJO_SCREEN_STREAM', 'http://100.76.206.127:8080/stream')
+SCREEN_FPS = float(os.environ.get('DOJO_SCREEN_FPS', '8'))          # max frames/s sent to each viewer
+SCREEN_WIDTH = int(os.environ.get('DOJO_SCREEN_WIDTH', '640'))      # frames wider than this are shrunk
+SCREEN_QUALITY = int(os.environ.get('DOJO_SCREEN_QUALITY', '60'))   # JPEG quality of the shrunk frames
+
+try:
+    from PIL import Image
+    import io
+except ImportError:      # shrinking is skipped (frame rate is still capped); pip install pillow to enable
+    Image = None
+
+
+def shrink_frame(frame):
+    """Return a smaller JPEG of `frame`, or the original if Pillow is missing or anything fails."""
+    if Image is None:
+        return frame
+    try:
+        img = Image.open(io.BytesIO(frame))
+        if img.width > SCREEN_WIDTH:
+            img = img.resize((SCREEN_WIDTH, round(img.height * SCREEN_WIDTH / img.width)))
+        out = io.BytesIO()
+        img.convert('RGB').save(out, 'JPEG', quality=SCREEN_QUALITY, optimize=True)
+        small = out.getvalue()
+        return small if len(small) < len(frame) else frame
+    except Exception:
+        return frame
+
+
+
+class ScreenFeed:
+    """Reads the Pi's MJPEG feed once and keeps only the newest JPEG frame.
+
+    Every browser gets the latest frame, never a backlog, so a slow viewer
+    skips frames instead of falling further behind. The upstream connection
+    is opened when the first viewer arrives and closed after the last leaves.
+    """
+
+    def __init__(self, url):
+        self.url = url
+        self.cond = threading.Condition()
+        self.frame = None
+        self.seq = 0
+        self.viewers = 0
+        self.thread = None
+
+    def acquire(self):
+        with self.cond:
+            self.viewers += 1
+            if self.thread is None:
+                self.thread = threading.Thread(target=self._run, daemon=True)
+                self.thread.start()
+
+    def release(self):
+        with self.cond:
+            self.viewers -= 1
+
+    def _run(self):
+        while True:
+            with self.cond:
+                if self.viewers <= 0:
+                    self.thread = None
+                    self.frame = None
+                    return
+            upstream = None
+            try:
+                upstream = urllib.request.urlopen(self.url, timeout=10)
+                buf = b''
+                while self.viewers > 0:
+                    chunk = upstream.read1(65536)
+                    if not chunk:
+                        break
+                    buf += chunk
+                    while True:                      # pull out every complete JPEG
+                        a = buf.find(b'\xff\xd8')
+                        if a < 0:
+                            buf = b''
+                            break
+                        b = buf.find(b'\xff\xd9', a + 2)
+                        if b < 0:
+                            buf = buf[a:]
+                            break
+                        frame, buf = buf[a:b + 2], buf[b + 2:]
+                        with self.cond:
+                            self.frame = frame
+                            self.seq += 1
+                            self.cond.notify_all()
+            except Exception:
+                time.sleep(1)                        # Pi unreachable: retry while viewers remain
+            finally:
+                if upstream is not None:
+                    upstream.close()
+
+
+screen_feed = ScreenFeed(SCREEN_STREAM_URL)
+
+
+@app.get("/api/screen_stream")
+def screen_stream():
+    """Serve the Pi's screen feed over this server (and so over its HTTPS): newest frame only,
+    capped frame rate, shrunk to SCREEN_WIDTH when Pillow is installed."""
+    min_gap = 1.0 / SCREEN_FPS if SCREEN_FPS > 0 else 0.0
+
+    def relay():
+        screen_feed.acquire()
+        last = 0
+        last_sent = 0.0
+        try:
+            while True:
+                wait = min_gap - (time.monotonic() - last_sent)
+                if wait > 0:
+                    time.sleep(wait)
+                with screen_feed.cond:
+                    screen_feed.cond.wait_for(lambda: screen_feed.seq != last, timeout=15)
+                    if screen_feed.seq == last:      # nothing from the Pi for 15 s
+                        break
+                    frame, last = screen_feed.frame, screen_feed.seq
+                frame = shrink_frame(frame)
+                yield (b'--frame\r\nContent-Type: image/jpeg\r\nContent-Length: %d\r\n\r\n'
+                       % len(frame)) + frame + b'\r\n'
+                last_sent = time.monotonic()
+        finally:
+            screen_feed.release()
+
+    return StreamingResponse(relay(), media_type='multipart/x-mixed-replace; boundary=frame')
 
 
 @app.post("/api/set_display")
