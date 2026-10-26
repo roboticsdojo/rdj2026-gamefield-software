@@ -47,9 +47,11 @@ function fmt(ms) {
     return `${String(m).padStart(2, '0')}:${String(s).padStart(2, '0')}.${d}`;
 }
 
-// Screen categories are folder names on the Pi ('other' holds the metal images).
+// Screen categories are folder names on the Pi (screen_images/test_images/<name>).
+// Metal tries 'metal' first and falls back to the old folder name 'other', so the page works
+// both before and after the Pi's folder is renamed.
 const CLASS_LABEL = { organic: 'Organic', metal: 'Metal', plastic: 'Plastic' };
-const SCREEN_CATEGORY = { organic: 'organic', metal: 'other', plastic: 'plastic' };
+const SCREEN_CATEGORY = { organic: ['organic'], metal: ['metal', 'other'], plastic: ['plastic'] };
 function normClass(s) {
     s = (s || '').toLowerCase();
     if (s === 'other' || s === 'metal') return 'metal';
@@ -337,7 +339,12 @@ const elapsed = () => (run.running ? Date.now() - run.startedAt : run.elapsedMs)
     async function sendClass(cls) {
         setStatus(`Requesting '${classLabel(cls)}' image…`);
         try {
-            const data = await api('/api/set_display_class', { category: SCREEN_CATEGORY[cls] });
+            let data = null;
+            for (const name of SCREEN_CATEGORY[cls]) {
+                data = await api('/api/set_display_class', { category: name });
+                // only try the next folder name when this one does not exist on the Pi
+                if (data.success || !/unknown or empty category/i.test(data.message || '')) break;
+            }
             setStatus(data.message);
             if (data.success) {
                 screenShown = cls;

@@ -866,7 +866,8 @@ async def get_team_page():
     return await get_index()
 
 
-SCREEN_STREAM_URL = os.environ.get('DOJO_SCREEN_STREAM', 'http://100.76.206.127:8080/stream')
+PI_HOST = os.environ.get('DOJO_PI_HOST', 'screen.local')          # the Pi is found by hostname, never by a stored IP
+SCREEN_STREAM_URL = os.environ.get('DOJO_SCREEN_STREAM', f'http://{PI_HOST}:8080/stream')   # dojo_net_up sets this from a live lookup
 SCREEN_FPS = float(os.environ.get('DOJO_SCREEN_FPS', '8'))          # max frames/s sent to each viewer
 SCREEN_WIDTH = int(os.environ.get('DOJO_SCREEN_WIDTH', '640'))      # frames wider than this are shrunk
 SCREEN_QUALITY = int(os.environ.get('DOJO_SCREEN_QUALITY', '60'))   # JPEG quality of the shrunk frames
@@ -1010,4 +1011,4 @@ def main():
 
 
 if __name__ == '__main__':
-    main()
+    main()s
