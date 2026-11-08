@@ -1,7 +1,8 @@
 // Robotics Dojo control page - all front-end logic in one file.
-// Sections: helpers, run state, timer, competition (teams/scoreboard),
-// screen + detection, dispenser, obstacles, maps + RViz live (judges),
-// finish run, team (/team), shell (sidebar / theme / pollers) - the shell must stay last.
+// One continuous page (no hidden sections). Sections: helpers, run state, timer (full screen + keys),
+// competition (teams, navbar scoreboard for slam / nav2 / autonomy),
+// screen + detection, dispenser, obstacles, map requests (judges),
+// finish run, shell (sidebar / theme / pollers) - the shell must stay last.
 // Anything that comes from teams (names, labels) is inserted with textContent.
 
 // ======================================================================
@@ -59,6 +60,16 @@ function normClass(s) {
 }
 const classLabel = (c) => CLASS_LABEL[c] || '—';
 
+// Challenges that get a time on the scoreboard. Runs saved before this existed have no category = autonomy.
+const CATS = [['slam', 'SLAM'], ['nav2', 'Nav2'], ['autonomy', 'Behaviour Trees']];
+const catLabel = (c) => (CATS.find((x) => x[0] === c) || CATS[2])[1];
+const catOf = (r) => (r && (r.category === 'slam' || r.category === 'nav2') ? r.category : 'autonomy');
+
+// true while the user is typing / choosing in a form control (keyboard timer shortcuts stay out of the way)
+function isTyping(t) {
+    return !!t && (t.isContentEditable || t.tagName === 'INPUT' || t.tagName === 'TEXTAREA' || t.tagName === 'SELECT');
+}
+
 function toast(title, msg, actionLabel, action, ms, tag) {
     if (tag) document.querySelectorAll(`.toast[data-tag="${tag}"]`).forEach((x) => x.remove());
     const t = el('div', 'toast');
@@ -87,40 +98,51 @@ function toast(title, msg, actionLabel, action, ms, tag) {
 // ======================================================================
 // The run being tracked lives in this browser (localStorage), so a refresh mid-run
 // loses nothing. It is sent to the server only when finalised.
-const STEPS = [
-    ['screen', 'Gamefield screen', 'detectionMs'],
-    ['loading', 'Loading station', 'loadedMs'],
-    ['obstacles', 'Dynamic obstacles', null],
-    ['maps', 'Map & RViz', 'stoppedMs'],
-];
-
-function newRun(team) {
-    return { team: team || '', running: false, startedAt: 0, elapsedMs: 0, epochStart: 0,
-             displayed: '', detected: '', detConf: null, detId: null, detectionMs: null,
-             correct: null, loadedMs: null, stoppedMs: null, notes: '', done: {} };
+function newRun(team, category) {
+    return { team: team || '', category: category || 'autonomy', running: false, startedAt: 0, elapsedMs: 0, epochStart: 0,
+             displayed: '', detected: '', detConf: null, detId: null,
+             correct: null, loadedMs: null, stoppedMs: null, notes: '' };
 }
 let run = Object.assign(newRun(), store.get('dojoRun', {}));
 const runListeners = [];
 function onRun(fn) { runListeners.push(fn); }
 function saveRun() { store.set('dojoRun', run); runListeners.forEach((fn) => fn()); }
 const elapsed = () => (run.running ? Date.now() - run.startedAt : run.elapsedMs);
+// the map is only requested at the end: once the timer has been stopped
+const mapsUnlocked = () => !run.running && run.stoppedMs !== null;
 
 
 // ======================================================================
-// TIMER
+// TIMER (full screen, keyboard controlled)
 // ======================================================================
 (function () {
+    const fsEl = $('timer-fs');
+    let fsOpen = false;
+    const STAGE_NAME = { home: 'Setup', screen: 'Gamefield screen', loading: 'Loading station',
+                         obstacles: 'Dynamic obstacles', maps: 'Map request' };
+
     function tick() {
-        const ms = elapsed();
-        $('timer-display').textContent = fmt(ms);
+        const t = fmt(elapsed());
+        $('timer-display').textContent = t;
+        $('tfs-display').textContent = t;
         $('timer').classList.toggle('running', run.running);
+        fsEl.classList.toggle('running', run.running);
     }
     setInterval(() => { if (run.running) tick(); }, 100);
+
+    // ---- full screen timer: collapses back to the compact timer in the top bar
+    window.setTimerFs = (open) => {
+        fsOpen = !!open;
+        fsEl.hidden = !fsOpen;
+        document.body.classList.toggle('fs-open', fsOpen);
+        $('timer-expand').classList.toggle('active', fsOpen);
+        if (!fsOpen && document.fullscreenElement) document.exitFullscreen().catch(() => {});
+    };
+    window.setStageLabel = (name) => { $('tfs-stage').textContent = STAGE_NAME[name] || ''; };
 
     window.startRun = () => {
         if (run.running) return;
         if (!run.team) {
-            toast('Pick a team first', 'Choose the team playing on the Home page.', 'Go to Home', () => window.go('home'));
             window.go('home');
             return;
         }
@@ -131,8 +153,8 @@ const elapsed = () => (run.running ? Date.now() - run.startedAt : run.elapsedMs)
         run.stoppedMs = null;
         saveRun();
         window.pushCurrent();
-        toast(resuming ? 'Timer resumed' : `Run started: ${run.team}`, 'The robot is on its way to the gamefield screen.',
-              'Go to Gamefield Screen', () => window.go('screen'), 0, 'run');
+        // the only notification left: an offer (not an automatic switch) to open the big timer
+        if (!fsOpen) toast('Full screen timer', 'Press F, or open it here.', 'Full screen', () => window.setTimerFs(true), 6000, 'fs');
     };
 
     window.stopRun = () => {
@@ -142,33 +164,105 @@ const elapsed = () => (run.running ? Date.now() - run.startedAt : run.elapsedMs)
         run.stoppedMs = run.elapsedMs;
         saveRun();
         window.pushCurrent();
-        if (window.currentSection === 'maps') toast(`Timer stopped at ${fmt(run.elapsedMs)}`, 'Request the map or RViz live and finalise the run.', '', null, 0, 'run');
-        else toast(`Timer stopped at ${fmt(run.elapsedMs)}`, 'Request the map or RViz live and finalise the run.',
-                   'Go to Map Request', () => window.go('maps'), 0, 'run');
     };
+
+    window.resetTimer = () => {
+        if (run.running) return;                 // stop the timer first
+        if (!run.elapsedMs) return;
+        if (!confirm('Reset the timer to 00:00.0?')) return;
+        Object.assign(run, { running: false, startedAt: 0, elapsedMs: 0, epochStart: 0,
+                             stoppedMs: null, loadedMs: null });
+        saveRun();
+        window.pushCurrent();
+    };
+
+    window.timerFsOpen = () => fsOpen;
+    const toggleRun = () => (run.running ? window.stopRun() : window.startRun());
 
     $('timer-start').addEventListener('click', window.startRun);
     $('timer-stop').addEventListener('click', window.stopRun);
     $('home-start').addEventListener('click', window.startRun);
+    $('timer').addEventListener('click', () => window.setTimerFs(!fsOpen));
+    $('timer-expand').addEventListener('click', () => window.setTimerFs(!fsOpen));
+    $('tfs-toggle').addEventListener('click', toggleRun);
+    $('tfs-reset').addEventListener('click', window.resetTimer);
+    $('timer-end').addEventListener('click', () => window.endRun());
+    $('tfs-end').addEventListener('click', () => window.endRun());
+    $('tfs-collapse').addEventListener('click', () => window.setTimerFs(false));
+    $('tfs-screen').addEventListener('click', () => {
+        if (document.fullscreenElement) document.exitFullscreen().catch(() => {});
+        else if (fsEl.requestFullscreen) fsEl.requestFullscreen().catch(() => {});
+    });
+
+    // ---- keyboard, like a normal timer
+    //   Space  start / stop (resume)      R  reset (when stopped)
+    //   F      full screen on / off       Esc  close scoreboard, then collapse the timer
+    //   S      scoreboard
+    document.addEventListener('keydown', (e) => {
+        if (e.ctrlKey || e.metaKey || e.altKey || isTyping(e.target)) return;
+        const k = e.key;
+        if (k === ' ' || k === 'Spacebar') {
+            e.preventDefault();                  // also stops Space from "clicking" a focused button
+            if (!e.repeat) toggleRun();
+            return;
+        }
+        if (e.repeat) return;
+        if (k === 'r' || k === 'R') window.resetTimer();
+        else if (k === 'f' || k === 'F') window.setTimerFs(!fsOpen);
+        else if (k === 's' || k === 'S') window.toggleScoreboard();
+        else if (k === 'Escape') {
+            if (!$('sb-panel').hidden) window.toggleScoreboard(false);
+            else if (fsOpen) window.setTimerFs(false);
+        }
+    });
+    document.addEventListener('keyup', (e) => {
+        if ((e.key === ' ' || e.key === 'Spacebar') && !isTyping(e.target)) e.preventDefault();
+    });
+    // a select / checkbox that keeps focus would swallow Space, so let go of it after a change
+    document.addEventListener('change', (e) => {
+        if (e.target.tagName === 'SELECT' || e.target.type === 'checkbox') e.target.blur();
+    });
 
     onRun(() => {
         tick();
+        const resume = !run.running && run.elapsedMs > 0;
         $('timer-start').disabled = run.running;
         $('timer-stop').disabled = !run.running;
-        $('timer-start').querySelector('span').textContent = !run.running && run.elapsedMs ? 'Resume' : 'Start';
+        $('timer-start').querySelector('span').textContent = resume ? 'Resume' : 'Start';
         $('home-start').disabled = run.running;
-        $('team-chip').textContent = run.team || 'No team';
+        const canEnd = !!run.team && (run.running || run.elapsedMs > 0);       // something has been timed
+        $('timer-end').disabled = !canEnd;
+        $('tfs-end').disabled = !canEnd;
+
+        const who = run.team ? `${run.team} · ${catLabel(run.category)}` : 'No team';
+        $('team-chip').textContent = who;
+        $('tfs-team').textContent = run.team || 'No team';
+        $('tfs-cat').textContent = catLabel(run.category);
+
+        const tg = $('tfs-toggle');
+        tg.className = 'btn tfs-btn ' + (run.running ? 'btn-stop' : 'btn-go');
+        tg.querySelector('use').setAttribute('href', run.running ? '#i-stop' : '#i-play');
+        tg.querySelector('span').textContent = run.running ? 'Stop' : resume ? 'Resume' : 'Start';
+        fsEl.classList.toggle('stopped', resume);
+
+        $('tfs-splits').replaceChildren(...[['Loaded', run.loadedMs], ['Stopped', run.stoppedMs]]
+            .map(([name, v]) => {
+                const d = el('div', 'tfs-split');
+                d.append(el('span', '', name), el('b', '', fmt(v)));
+                return d;
+            }));
     });
 })();
 
 // ======================================================================
-// COMPETITION: teams, scoreboard, home page (talks to /api/competition)
+// COMPETITION: teams, challenge, navbar scoreboard, setup (talks to /api/competition)
 // ======================================================================
 (function () {
     let comp = { teams: [], runs: [], current: null };
+    let sortKey = store.get('dojoSbSort', 'autonomy');      // 'team' | 'slam' | 'nav2' | 'autonomy'
 
     window.pushCurrent = () => {
-        api('/api/competition/current', { team: run.team, running: run.running,
+        api('/api/competition/current', { team: run.team, running: run.running, category: run.category,
             elapsed_ms: Math.round(elapsed()), section: window.currentSection || '' }).catch(() => {});
     };
 
@@ -178,16 +272,22 @@ const elapsed = () => (run.running ? Date.now() - run.startedAt : run.elapsedMs)
     }
     window.competitionRefresh = load;
 
+    // teams listed in index.html (data-teams), plus any added through "Manage teams",
+    // the team playing now and (for the scoreboard) every team that has a finished run
+    function allTeams(withRuns) {
+        const names = ($('team-select').dataset.teams || '').split(';').map((n) => n.trim()).filter(Boolean);
+        const add = (n) => { if (n && !names.some((x) => x.toLowerCase() === n.toLowerCase())) names.push(n); };
+        comp.teams.forEach(add);
+        add(run.team);
+        if (withRuns) comp.runs.forEach((r) => add(r.team));
+        return names;
+    }
+
     function renderTeams() {
         const sel = $('team-select');
-        // teams listed in index.html (data-teams) plus any added through "Manage teams"
-        const preset = ($('team-select').dataset.teams || '').split(';').map((n) => n.trim()).filter(Boolean);
-        const names = [...preset];
-        comp.teams.forEach((n) => { if (!names.some((x) => x.toLowerCase() === n.toLowerCase())) names.push(n); });
-        if (run.team && !names.some((n) => n.toLowerCase() === run.team.toLowerCase())) names.push(run.team);
         sel.replaceChildren(el('option', '', 'Select a team…'));
         sel.firstChild.value = '';
-        names.forEach((n) => { const o = el('option', '', n); o.value = n; sel.appendChild(o); });
+        allTeams(false).forEach((n) => { const o = el('option', '', n); o.value = n; sel.appendChild(o); });
         sel.value = run.team;
         sel.disabled = run.running;
 
@@ -209,38 +309,56 @@ const elapsed = () => (run.running ? Date.now() - run.startedAt : run.elapsedMs)
         });
     }
 
+    // ---- scoreboard (top bar): fastest time per team for each challenge
     function renderScoreboard() {
-        const best = new Map();
+        const rows = new Map();
+        allTeams(true).forEach((n) => rows.set(n.toLowerCase(), { team: n, best: {}, count: {} }));
         comp.runs.forEach((r) => {
-            const k = r.team.toLowerCase();
-            const b = best.get(k);
-            if (!b) best.set(k, { team: r.team, run: r, count: 1 });
-            else {
-                b.count++;
-                if (r.elapsed_ms < b.run.elapsed_ms) b.run = r;
-            }
+            const row = rows.get(r.team.toLowerCase());
+            const c = catOf(r);
+            row.count[c] = (row.count[c] || 0) + 1;
+            if (row.best[c] === undefined || r.elapsed_ms < row.best[c]) row.best[c] = r.elapsed_ms;
         });
-        const rows = [...best.values()].sort((a, b) => a.run.elapsed_ms - b.run.elapsed_ms);
+
+        const list = [...rows.values()];
+        const val = (row) => (row.best[sortKey] === undefined ? Infinity : row.best[sortKey]);
+        list.sort(sortKey === 'team'
+            ? (a, b) => a.team.localeCompare(b.team)
+            : (a, b) => (val(a) - val(b)) || a.team.localeCompare(b.team));      // NaN (both empty) falls through to the name
+
+        const colBest = {};
+        CATS.forEach(([k]) => {
+            const v = list.map((r) => r.best[k]).filter((x) => x !== undefined);
+            colBest[k] = v.length ? Math.min(...v) : null;
+        });
+
+        $('scoreboard').querySelectorAll('.sort').forEach((b) => b.classList.toggle('on', b.dataset.sort === sortKey));
         const tb = $('scoreboard').querySelector('tbody');
         tb.replaceChildren();
-        if (!rows.length) {
-            const td = el('td', 'empty', 'No finished runs yet.');
+        if (!list.length) {
+            const td = el('td', 'empty', 'No teams yet.');
             td.colSpan = 4;
             tb.appendChild(el('tr')).appendChild(td);
         }
-        rows.forEach((r, i) => {
-            const tr = el('tr', i === 0 ? 'top' : '');
-            if (run.team && r.team.toLowerCase() === run.team.toLowerCase()) tr.classList.add('playing');
-            tr.append(el('td', 'rank', String(i + 1)), el('td', '', r.team),
-                      el('td', 'num', fmt(r.run.elapsed_ms)), el('td', 'num', String(r.count)));
+        list.forEach((row) => {
+            const tr = el('tr');
+            if (run.team && row.team.toLowerCase() === run.team.toLowerCase()) tr.classList.add('playing');
+            tr.appendChild(el('td', '', row.team));
+            CATS.forEach(([k]) => {
+                const v = row.best[k];
+                const td = el('td', 'num' + (v === undefined ? ' dim' : v === colBest[k] ? ' best' : ''), v === undefined ? '—' : fmt(v));
+                if (v !== undefined) td.title = `${row.count[k]} run${row.count[k] > 1 ? 's' : ''}`;
+                tr.appendChild(td);
+            });
             tb.appendChild(tr);
         });
 
+        // ---- full run log (Setup section), newest first
         const rb = $('runs-table').querySelector('tbody');
         rb.replaceChildren();
         if (!comp.runs.length) {
             const td = el('td', 'empty', 'Nothing yet.');
-            td.colSpan = 5;
+            td.colSpan = 6;
             rb.appendChild(el('tr')).appendChild(td);
         }
         [...comp.runs].reverse().forEach((r) => {
@@ -250,45 +368,69 @@ const elapsed = () => (run.running ? Date.now() - run.startedAt : run.elapsedMs)
             del.title = 'Delete this run';
             del.appendChild(icon('x'));
             del.addEventListener('click', async () => {
-                if (!confirm(`Delete ${r.team}'s run (${fmt(r.elapsed_ms)})?`)) return;
+                if (!confirm(`Delete ${r.team}'s ${catLabel(catOf(r))} run (${fmt(r.elapsed_ms)})?`)) return;
                 await api('/api/competition/runs/' + r.id, undefined, 'DELETE');
                 load();
             });
             const td = el('td');
             td.appendChild(del);
             tr.append(el('td', '', new Date(r.time * 1000).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })),
-                      el('td', '', r.team), el('td', 'num', fmt(r.elapsed_ms)),
+                      el('td', '', r.team), el('td', '', catLabel(catOf(r))), el('td', 'num', fmt(r.elapsed_ms)),
                       el('td', 'small', det), td);
             rb.appendChild(tr);
         });
     }
 
+    $('scoreboard').querySelectorAll('.sort').forEach((b) => b.addEventListener('click', () => {
+        sortKey = b.dataset.sort;
+        store.set('dojoSbSort', sortKey);
+        renderScoreboard();
+    }));
+
+    // ---- scoreboard panel open / close (button, S key, Esc, click outside)
+    window.toggleScoreboard = (open) => {
+        const show = open === undefined ? $('sb-panel').hidden : open;
+        $('sb-panel').hidden = !show;
+        $('sb-toggle').classList.toggle('active', show);
+        $('sb-toggle').setAttribute('aria-expanded', String(show));
+        if (show) load();
+    };
+    $('sb-toggle').addEventListener('click', () => window.toggleScoreboard());
+    $('sb-close').addEventListener('click', () => window.toggleScoreboard(false));
+    document.addEventListener('mousedown', (e) => {
+        if (!$('sb-panel').hidden && !e.target.closest('#sb-panel, #sb-toggle')) window.toggleScoreboard(false);
+    });
+
     function renderNowPlaying() {
         const box = $('now-playing');
         box.replaceChildren();
-        if (!run.team) {
-            box.appendChild(el('span', 'muted', 'Pick a team, then press Start. The timer runs at the top while you move through the sections.'));
-            return;
-        }
+        box.hidden = !run.team;
+        if (!run.team) return;
         box.appendChild(el('div', 'now-team', run.team));
         const state = run.running ? 'Running' : run.elapsedMs ? `Stopped at ${fmt(run.elapsedMs)}` : 'Ready to start';
-        box.appendChild(el('div', 'now-meta', state));
+        box.appendChild(el('div', 'now-meta', `${catLabel(run.category)} · ${state}`));
     }
 
-    function renderProgress() {
-        const ol = $('progress-list');
-        ol.replaceChildren();
-        STEPS.forEach(([sec, name, timeKey], i) => {
-            const li = el('li', run.done[sec] ? 'done' : '');
-            li.append(el('span', 'p-dot', run.done[sec] ? '✓' : String(i + 1)), el('span', 'p-name', name),
-                      el('span', 'p-time', timeKey && run[timeKey] !== null ? fmt(run[timeKey]) : ''));
-            li.addEventListener('click', () => window.go(sec));
-            ol.appendChild(li);
+    function renderCat() {
+        $('cat-seg').querySelectorAll('.seg-btn').forEach((b) => {
+            b.classList.toggle('active', b.dataset.cat === run.category);
+            b.disabled = run.running;
         });
     }
 
-    function render() { renderTeams(); renderScoreboard(); renderNowPlaying(); renderProgress(); }
-    onRun(() => { renderNowPlaying(); renderProgress(); $('team-select').disabled = run.running; });
+    function render() { renderTeams(); renderScoreboard(); renderNowPlaying(); renderCat(); }
+    onRun(() => {
+        renderNowPlaying(); renderCat(); renderScoreboard();
+        $('team-select').disabled = run.running;
+    });
+
+    $('cat-seg').addEventListener('click', (e) => {
+        const b = e.target.closest('.seg-btn');
+        if (!b || run.running || run.category === b.dataset.cat) return;
+        run.category = b.dataset.cat;
+        saveRun();
+        window.pushCurrent();
+    });
 
     $('team-select').addEventListener('change', () => {
         const t = $('team-select').value;
@@ -297,17 +439,15 @@ const elapsed = () => (run.running ? Date.now() - run.startedAt : run.elapsedMs)
             $('team-select').value = run.team;
             return;
         }
-        run = hasData && t !== run.team ? newRun(t) : Object.assign(run, { team: t });
+        run = hasData && t !== run.team ? newRun(t, run.category) : Object.assign(run, { team: t });
         saveRun();
         window.pushCurrent();
-        renderScoreboard();
     });
 
     $('team-add').addEventListener('click', async () => {
         const name = $('team-new').value.trim();
         if (!name) return;
         const r = await api('/api/competition/teams', { name });
-        if (!r.success) toast('Not added', r.message);
         $('team-new').value = '';
         load();
     });
@@ -315,16 +455,16 @@ const elapsed = () => (run.running ? Date.now() - run.startedAt : run.elapsedMs)
 
     $('home-reset').addEventListener('click', () => {
         if (!confirm('Discard the run in progress? The timer and detection are cleared.')) return;
-        const team = run.team;
-        run = newRun(team);
+        run = newRun(run.team, run.category);
         saveRun();
         window.pushCurrent();
     });
 
+    // the scoreboard lives in the top bar, so it refreshes on every section (started by the shell)
     let timer = null;
     window.competitionStart = () => { if (!timer) { load(); timer = setInterval(load, 5000); } };
     window.competitionStop = () => { clearInterval(timer); timer = null; };
-    load();
+    render();       // preset teams show up even if the server is slow
 })();
 
 // ======================================================================
@@ -375,14 +515,9 @@ const elapsed = () => (run.running ? Date.now() - run.startedAt : run.elapsedMs)
         saveRun();
     }
     $('v-correct').addEventListener('click', () => setCorrect(run.correct !== true));
-    $('v-mark-now').addEventListener('click', () => {
-        if (!run.running && !run.elapsedMs) { toast('Timer not running', 'Start the run first.'); return; }
-        run.detectionMs = elapsed();
-        saveRun();
-    });
 
     $('det-request').addEventListener('click', async () => {
-        if (!run.team) { toast('No team selected', 'Pick the team on the Home page.'); return; }
+        if (!run.team) return;
         $('det-status').textContent = 'Asking the robot for its detection…';
         try {
             const data = await api('/api/maps/request', { format: 'detection', team: run.team });
@@ -406,27 +541,14 @@ const elapsed = () => (run.running ? Date.now() - run.startedAt : run.elapsedMs)
             run.detId = m.id;
             run.detected = normClass(m.label);
             run.detConf = m.confidence;
-            if (run.detectionMs === null && run.running) run.detectionMs = elapsed();
             if (run.displayed && run.detected) setCorrect(run.detected === run.displayed); else saveRun();
-            const verdict = !run.detected ? 'no label sent' : run.correct ? 'correct' : 'WRONG';
-            toast(`Robot detected ${classLabel(run.detected)}`, `Screen shows ${classLabel(run.displayed)}: ${verdict}.`,
-                  'Go to Loading Station', () => window.go('loading'), 0, 'det');
         }
         const shown = dets.find((m) => m.id === run.detId) || (run.detId ? null : dets[0]);
         renderDetection(shown);
     };
 
     function renderDetection(m) {
-        const img = $('det-img');
-        $('det-empty').hidden = !!m;
-        img.hidden = !m;
-        const old = $('robot-detection-view').querySelector('.det-label');
-        if (old) old.remove();
-        if (!m) return;
-        if (img.dataset.id !== m.id) { img.src = m.display_url; img.dataset.id = m.id; }
-        const conf = m.confidence !== null && m.confidence !== undefined ? ` · ${Math.round(m.confidence * 100)}%` : '';
-        $('robot-detection-view').appendChild(el('span', 'det-label', classLabel(normClass(m.label)) + conf));
-        $('det-status').textContent = `Detection received ${new Date(m.time * 1000).toLocaleTimeString()}`;
+        if (m) $('det-status').textContent = `Detection received ${new Date(m.time * 1000).toLocaleTimeString()}`;
     }
 
 
@@ -445,7 +567,6 @@ const elapsed = () => (run.running ? Date.now() - run.startedAt : run.elapsedMs)
         $('v-displayed').textContent = classLabel(run.displayed);
         $('v-detected').textContent = run.detected ? classLabel(run.detected) +
             (run.detConf !== null && run.detConf !== undefined ? ` (${Math.round(run.detConf * 100)}%)` : '') : '—';
-        $('v-dettime').textContent = fmt(run.detectionMs);
         const c = $('v-correct');
         c.setAttribute('aria-pressed', String(run.correct === true));
         c.classList.toggle('wrong', run.correct === false);
@@ -543,7 +664,6 @@ const elapsed = () => (run.running ? Date.now() - run.startedAt : run.elapsedMs)
         if (run.running && run.loadedMs === null) {
             run.loadedMs = elapsed();
             saveRun();
-            toast('Item loaded', `${text} at ${fmt(run.loadedMs)}.`, 'Go to Dynamic Obstacles', () => window.go('obstacles'));
         }
     }
 
@@ -678,46 +798,16 @@ const elapsed = () => (run.running ? Date.now() - run.startedAt : run.elapsedMs)
     }
     $('obs-random').addEventListener('click', randomize);
 
-    $('obs-copy').addEventListener('click', async () => {
-        const text = 'Obstacles: ' + current.map((i) => `${cells[i].name} (x ${cells[i].cx}, y ${cells[i].cy})`).join('; ');
-        try {
-            await navigator.clipboard.writeText(text);
-            $('obs-status').textContent = `Copied: ${describe()}`;
-        } catch (e) {
-            $('obs-status').textContent = text;   // clipboard API needs https/localhost
-        }
-    });
-
-    // time-based: optionally reshuffle every N seconds
-    let auto = null;
-    function setAuto() {
-        clearInterval(auto);
-        auto = null;
-        const s = Math.max(5, Number($('obs-auto-s').value) || 20);
-        if ($('obs-auto').checked) auto = setInterval(randomize, s * 1000);
-    }
-    $('obs-auto').addEventListener('change', setAuto);
-    $('obs-auto-s').addEventListener('change', setAuto);
-
-    $('obs-stop-timer').addEventListener('click', () => {
-        run.done.obstacles = true;
-        window.go('maps');
-        if (run.running) window.stopRun();
-        else saveRun();
-    });
-    onRun(() => {
-        $('obs-stop-timer').querySelector('span').textContent = run.running ? 'Stop timer & go to Map' : 'Go to Map';
-    });
 
     randomize();   // start with a layout already shown
 })();
 
 // ======================================================================
-// MAP REQUEST PANEL + RVIZ LIVE, judges - talks to /api/maps/*
+// MAP REQUEST PANEL, judges - talks to /api/maps/*
 // ======================================================================
 (function () {
     const FORMAT_LABEL = { pgm: 'PGM map', screenshot: 'RViz screenshot', any: 'Either',
-                           detection: 'Detection image', rviz_live: 'RViz live' };
+                           detection: 'Detection image' };
 
     let maps = [];
     let known = null;          // ids already seen (null until first poll)
@@ -725,97 +815,20 @@ const elapsed = () => (run.running ? Date.now() - run.startedAt : run.elapsedMs)
     let followLatest = true;
     let historySig = '';
 
-    // ---- RViz live: the robot registers an MJPEG url (kind 'rviz'), we just show it
-    let rvizStreams = [];
-    let rvizPending = false;
-    let liveStopped = false;       // the judge pressed Stop
-    let knownStreams = null;       // 'team|url|time' keys already seen (null until first poll)
-    let liveState = '';            // '' | 'loading' | 'live' | 'error'
-    let shownUrl = '';
-
     function setStatus(t) { $('maps-status').textContent = t; }
     const ago = (s) => (s < 60 ? `${s}s` : `${Math.floor(s / 60)}m ${s % 60}s`);
 
-    $('maps-format').addEventListener('change', () => {
-        $('maps-request-btn').querySelector('span').textContent =
-            $('maps-format').value === 'rviz_live' ? 'Request RViz live' : 'Request map';
-    });
-
     async function sendRequest(format, team) {
+        if (!mapsUnlocked()) return;
         setStatus('Sending request…');
         try {
             const data = await api('/api/maps/request', { format, team });
             setStatus(data.message);
-            if (format === 'rviz_live') { liveStopped = false; setRviz(true, false); }
         } catch (e) { setStatus('Error connecting to web bridge'); }
         poll();
     }
     $('maps-request-btn').addEventListener('click', () => sendRequest($('maps-format').value, $('maps-team').value));
-    $('rviz-request').addEventListener('click', () => sendRequest('rviz_live', run.team || $('maps-team').value));
 
-
-    // ---- floating panel: open / collapsed state is remembered in the browser
-    const rvizUI = store.get('dojoRviz', { open: false, collapsed: false });
-    function setRviz(open, collapsed) {
-        rvizUI.open = open;
-        if (collapsed !== undefined) rvizUI.collapsed = collapsed;
-        store.set('dojoRviz', rvizUI);
-        window.rvizPanelOpen = open;
-        $('rviz-panel').hidden = !open;
-        $('rviz-panel').classList.toggle('collapsed', rvizUI.collapsed);
-        $('rviz-body').hidden = rvizUI.collapsed;
-        $('rviz-toggle').classList.toggle('active', open);
-        renderLive();
-        if (window.refreshPollers) window.refreshPollers();     // keep polling while the panel is open
-    }
-    $('rviz-toggle').addEventListener('click', () => setRviz(!rvizUI.open, false));
-    $('rviz-collapse').addEventListener('click', () => setRviz(true, !rvizUI.collapsed));
-    $('rviz-close').addEventListener('click', () => setRviz(false));
-    $('rviz-head').addEventListener('click', (e) => { if (!e.target.closest('button')) setRviz(true, !rvizUI.collapsed); });
-
-    function rvizUrl() {
-        const manual = $('rviz-url').value.trim();
-        if (manual) return { url: manual, team: run.team || '', time: null };
-        const want = ($('maps-team').value.trim() || run.team || '').toLowerCase();
-        const mine = rvizStreams.filter((x) => !want || x.team.toLowerCase() === want);
-        const latest = mine.sort((a, b) => b.time - a.time)[0];
-        return latest || null;
-    }
-
-    function renderLive() {
-        // only pull the MJPEG stream while the panel is open and expanded, it eats bandwidth
-        const img = $('rviz-stream');
-        const s = rvizUrl();
-        const on = rvizUI.open && !rvizUI.collapsed && !liveStopped && s;
-        const url = on ? s.url : '';
-        if (!url) {
-            if (img.getAttribute('src')) img.removeAttribute('src');
-            shownUrl = '';
-            liveState = '';
-        } else if (shownUrl !== url) {
-            shownUrl = url;
-            liveState = 'loading';
-            img.src = url;
-        }
-        img.hidden = !url || liveState === 'error';
-        $('rviz-empty').hidden = !img.hidden;
-        $('rviz-live-dot').hidden = liveState !== 'live';
-        $('rviz-empty-text').innerHTML = liveState === 'error'
-            ? 'Cannot open the stream.<br>Check the robot is still running <code>dojo_rviz_stream.py</code> and is on the same network.'
-            : liveStopped
-                ? 'Stream stopped.<br>Press <b>Resume</b> to watch again.'
-                : 'No RViz stream yet.<br>Press <b>Request</b> to ask the team.';
-        $('rviz-stop').textContent = liveStopped ? 'Resume' : 'Stop';
-        $('rviz-stop').disabled = !s;
-        $('rviz-toggle').classList.toggle('live', liveState === 'live');
-        $('rviz-meta').textContent = !s ? (rvizPending ? 'waiting for the robot…' : '—')
-            : `${s.team || 'manual url'} · RViz live` + (s.time ? ` · registered ${new Date(s.time * 1000).toLocaleTimeString()}` : '') +
-              (liveState === 'live' ? ' · streaming' : liveState === 'loading' ? ' · connecting…' : '');
-    }
-    $('rviz-stream').addEventListener('load', () => { liveState = 'live'; renderLive(); });
-    $('rviz-stream').addEventListener('error', () => { if ($('rviz-stream').getAttribute('src')) { liveState = 'error'; renderLive(); } });
-    $('rviz-url').addEventListener('change', () => { liveStopped = false; renderLive(); });
-    $('rviz-stop').addEventListener('click', () => { liveStopped = !liveStopped; renderLive(); });
 
     async function cancel(id) {
         try { await api(`/api/maps/request/${id}/cancel`, {}); } catch (e) { /* next poll shows state */ }
@@ -829,7 +842,7 @@ const elapsed = () => (run.running ? Date.now() - run.startedAt : run.elapsedMs)
             const row = el('div', 'req req-' + r.status);
             let text = `${FORMAT_LABEL[r.format]} · ${r.team || 'any team'} · `;
             if (r.status === 'pending') text += `WAITING ${ago(r.age_s)}`;
-            else if (r.status === 'fulfilled') text += r.format === 'rviz_live' ? `streaming from ${r.answered_by}` : `received from ${r.answered_by}`;
+            else if (r.status === 'fulfilled') text += `received from ${r.answered_by}`;
             else if (r.status === 'failed') text += `FAILED (${r.answered_by}): ${r.message || 'no reason given'}`;
             else text += r.status;
             row.appendChild(el('span', '', text));
@@ -900,16 +913,6 @@ const elapsed = () => (run.running ? Date.now() - run.startedAt : run.elapsedMs)
     }
 
     function render(s) {
-        rvizStreams = (s.streams || []).filter((x) => x.kind === 'rviz');
-        rvizPending = s.requests.some((r) => r.format === 'rviz_live' && r.status === 'pending');
-        const keys = new Set(rvizStreams.map((x) => `${x.team}|${x.url}|${x.time}`));
-        const newStream = knownStreams !== null && rvizStreams.find((x) => !knownStreams.has(`${x.team}|${x.url}|${x.time}`));
-        knownStreams = keys;
-        if (newStream) {
-            liveStopped = false;
-            setStatus(`RViz live from ${newStream.team}`);
-            setRviz(true, false);
-        }
         renderRequests(s.requests.filter((r) => r.format !== 'detection'));
         maps = s.maps.filter((m) => m.kind !== 'detection');
         const ids = new Set(maps.map((m) => m.id));
@@ -918,14 +921,12 @@ const elapsed = () => (run.running ? Date.now() - run.startedAt : run.elapsedMs)
         if (fresh.length) {
             setStatus(`Map received from ${fresh[0].team}`);
             followLatest = true;
-            if (window.currentSection !== 'maps') toast(`Map received from ${fresh[0].team}`, '', 'View map', () => window.go('maps'));
         }
         if (followLatest && maps.length) selectedId = maps[0].id;
         if (selectedId && !ids.has(selectedId)) selectedId = maps.length ? maps[0].id : null;
         const sig = maps.map((m) => m.id).join();
         if (sig !== historySig) { historySig = sig; renderHistory(); }
         renderViewer();
-        renderLive();
     }
 
     async function poll() {
@@ -937,10 +938,18 @@ const elapsed = () => (run.running ? Date.now() - run.startedAt : run.elapsedMs)
     }
 
     let timer = null;
-    window.mapsStart = () => { if (!timer) { poll(); timer = setInterval(poll, 1000); } renderLive(); };
-    window.mapsStop = () => { clearInterval(timer); timer = null; renderLive(); };
+    window.mapsStart = () => { if (!timer) { poll(); timer = setInterval(poll, 1000); } };
+    window.mapsStop = () => { clearInterval(timer); timer = null; };
     window.mapsPrefill = () => { if (run.team) $('maps-team').value = run.team; };
-    setRviz(rvizUI.open, rvizUI.collapsed);
+
+    function renderLock() {
+        const ok = mapsUnlocked();
+        $('maps-lock').hidden = ok;
+        ['maps-format', 'maps-team', 'maps-request-btn'].forEach((id) => { $(id).disabled = !ok; });
+        if (run.team && ok && !$('maps-team').value) $('maps-team').value = run.team;
+    }
+    onRun(renderLock);
+    renderLock();
 })();
 
 // ======================================================================
@@ -953,127 +962,38 @@ const elapsed = () => (run.running ? Date.now() - run.startedAt : run.elapsedMs)
 
     $('run-notes').addEventListener('input', () => { run.notes = $('run-notes').value; store.set('dojoRun', run); });
 
-    $('finalize').addEventListener('click', async () => {
-        if (!run.team) { toast('No team selected', 'Pick the team on the Home page.'); return; }
+    window.endRun = async () => {
+        if (!run.team) return;
+        if (!run.running && run.elapsedMs <= 0) return;      // nothing timed yet
         if (run.running && !confirm('The timer is still running. Stop it and finalise?')) return;
         if (run.running) { run.elapsedMs = Date.now() - run.startedAt; run.running = false; run.stoppedMs = run.elapsedMs; }
         try {
             const r = await api('/api/competition/runs', {
-                team: run.team, elapsed_ms: Math.round(run.elapsedMs), total: 0, scores: {},
+                team: run.team, category: run.category, elapsed_ms: Math.round(run.elapsedMs), total: 0, scores: {},
                 displayed: run.displayed, detected: run.detected, notes: run.notes,
             });
             if (!r.success) throw new Error(r.message);
-            toast('Run saved', r.message);
-            run = newRun();
+            const saved = { team: run.team, cat: catLabel(run.category), time: fmt(run.elapsedMs) };
+            run = newRun('', run.category);
             saveRun();
             window.competitionRefresh();
             window.go('home');
+            toast(`Run saved for ${saved.team}`, `${saved.cat} · ${saved.time}`, '', null, 5000, 'saved');
         } catch (e) {
-            toast('Could not save the run', 'Check the web bridge is running, then try again.');
+            console.error('Could not save the run', e);      // the run stays in the browser; try End run again
+            toast('Could not save the run', 'Check the web bridge is running, then press End run again.', '', null, 6000, 'saved');
         }
-    });
+    };
+    $('finalize').addEventListener('click', window.endRun);
 })();
 
 // ======================================================================
-// TEAM UPLOAD PAGE, /team - competitor fallback page
+// SHELL: sidebar jump links, scroll-spy, theme, pollers - must stay last
 // ======================================================================
-(function () {
-    let pending = [];
-
-    $('team').value = store.get('dojoTeam', '');
-    $('token').value = store.get('dojoToken', '');
-
-    const headers = () => ({ 'X-Dojo-Token': $('token').value });
-    const team = () => $('team').value.trim();
-
-    function kindOf(file) {
-        const n = file.name.toLowerCase();
-        if (n.endsWith('.pgm')) return 'pgm';
-        if (/\.(png|jpe?g)$/.test(n)) return 'screenshot';
-        return null;
-    }
-
-    function updateCmd() {
-        const t = team() || 'YOUR_TEAM';
-        $('cmd').textContent =
-            `curl -fsSL ${location.origin}/static/dojo_map.py -o dojo_map.py\n` +
-            `# answer map + detection requests:\n` +
-            `python3 dojo_map.py --server ${location.origin} --team "${t}" --watch\n\n` +
-            `curl -fsSL ${location.origin}/static/dojo_rviz_stream.py -o dojo_rviz_stream.py\n` +
-            `# start RViz first, then answer "RViz live" requests (streams the RViz window):\n` +
-            `python3 dojo_rviz_stream.py --server ${location.origin} --team "${t}" --watch`;
-    }
-
-    function updateSend() { $('send').disabled = !($('file').files[0] && team()); }
-
-    async function refresh() {
-        try {
-            const st = await (await fetch('/api/maps/status')).json();
-            $('token-row').hidden = !st.token_required;
-            const res = await fetch('/api/maps/pending?team=' + encodeURIComponent(team()), { headers: headers() });
-            const data = await res.json();
-            pending = res.ok ? data.requests.filter((r) => r.format !== 'detection') : [];
-            const box = $('pending');
-            if (!res.ok) { box.className = 'pending none'; box.textContent = data.detail || 'Not allowed'; }
-            else if (!pending.length) { box.className = 'pending none'; box.textContent = 'No request right now.'; }
-            else {
-                const r = pending[0], labels = { pgm: 'a PGM map', screenshot: 'an RViz screenshot', any: 'a map or RViz screenshot',
-                                                 rviz_live: 'a live RViz stream (use the terminal command below)' };
-                box.className = 'pending wait';
-                box.textContent = `Judges want ${labels[r.format] || r.format} (${r.age_s}s ago)`;
-            }
-        } catch (e) { $('pending').textContent = 'Cannot reach the judges server'; }
-    }
-
-    $('file').addEventListener('change', () => {
-        const f = $('file').files[0], img = $('preview');
-        img.hidden = !(f && kindOf(f) === 'screenshot');      // browsers can't preview PGM
-        if (!img.hidden) img.src = URL.createObjectURL(f);
-        updateSend();
-    });
-    $('team').addEventListener('input', () => { store.set('dojoTeam', team()); updateCmd(); updateSend(); });
-    $('token').addEventListener('input', () => store.set('dojoToken', $('token').value));
-
-    $('send').addEventListener('click', async () => {
-        const f = $('file').files[0], kind = kindOf(f), out = $('result');
-        const req = pending.find((r) => r.format === 'any' || r.format === kind);
-        const q = new URLSearchParams({ team: team(), filename: f.name });
-        if (req) q.set('request_id', req.id);
-        out.className = '';
-        out.textContent = 'Sending…';
-        try {
-            const res = await fetch('/api/maps/upload?' + q, {
-                method: 'POST', headers: { ...headers(), 'Content-Type': 'application/octet-stream' }, body: f });
-            const data = await res.json();
-            out.className = res.ok ? 'ok' : 'err';
-            out.textContent = res.ok ? data.message : (data.detail || 'Upload failed');
-        } catch (e) { out.className = 'err'; out.textContent = 'Cannot reach the judges server'; }
-        refresh();
-    });
-
-    $('copy').addEventListener('click', async () => {
-        try { await navigator.clipboard.writeText($('cmd').textContent); $('copy').textContent = 'Copied'; }
-        catch (e) { $('copy').textContent = 'Select the text and copy'; }
-    });
-
-    updateCmd();
-    updateSend();
-
-    let timer = null;
-    window.teamStart = () => { if (!timer) { refresh(); timer = setInterval(refresh, 2000); } };
-})();
-
-// ======================================================================
-// SHELL: sidebar, sections, theme, pollers - must stay last
-// ======================================================================
-// One section visible at a time, remembered in the URL hash (e.g. /#loading).
-// Pollers run while their section is visible; maps + dispenser also keep running
-// during a run so detections and loads are caught whichever section is open.
 (function () {
     const SECTIONS = ['home', 'screen', 'loading', 'obstacles', 'maps'];
-    const NEXT = { screen: 'loading', loading: 'obstacles' };
-    const NAMES = { loading: 'Loading Station', obstacles: 'Dynamic Obstacles' };
     const sidebar = $('sidebar');
+    const main = $('main');
     const mobile = () => window.matchMedia('(max-width: 720px)').matches;
 
     // ---- theme (light by default)
@@ -1086,7 +1006,7 @@ const elapsed = () => (run.running ? Date.now() - run.startedAt : run.elapsedMs)
     $('theme-toggle').addEventListener('click', () =>
         applyTheme(document.documentElement.dataset.theme === 'dark' ? 'light' : 'dark'));
 
-    // ---- sidebar
+    // ---- sidebar: jump links into the one continuous page
     if (mobile() || store.get('dojoNavCollapsed', false)) sidebar.classList.add('collapsed');
     $('nav-toggle').addEventListener('click', () => {
         sidebar.classList.toggle('collapsed');
@@ -1097,54 +1017,63 @@ const elapsed = () => (run.running ? Date.now() - run.startedAt : run.elapsedMs)
         if (mobile()) sidebar.classList.add('collapsed');
     }));
 
-    // ---- pollers
+    // ---- pollers: sections that are on screen (or a run in progress) keep their data fresh
+    const vis = new Set();      // sections currently in view
     function updatePollers() {
-        const s = window.currentSection;
         const live = run.running;
-        if (s === 'screen' || s === 'maps' || live || window.rvizPanelOpen) window.mapsStart(); else window.mapsStop();
-        if (s === 'loading' || live) window.dispenserStart(); else window.dispenserStop();
-        if (s === 'home') window.competitionStart(); else window.competitionStop();
-        if (s === 'screen') window.screenStart(); else window.screenStop();
+        if (vis.has('screen') || vis.has('maps') || live) window.mapsStart(); else window.mapsStop();
+        if (vis.has('loading') || live) window.dispenserStart(); else window.dispenserStop();
+        if (vis.has('screen')) window.screenStart(); else window.screenStop();
     }
     onRun(updatePollers);
     window.refreshPollers = updatePollers;
 
-    window.go = (name) => {
-        if (!SECTIONS.includes(name)) name = 'home';
-        SECTIONS.forEach((k) => { $('sec-' + k).hidden = k !== name; });
-        sidebar.querySelectorAll('.nav-item').forEach((b) => b.classList.toggle('active', b.dataset.section === name));
+    // ---- which section is "current" (sidebar highlight, hash, timer overlay label)
+    let spyLock = 0, pushTimer = null;
+    function setCurrent(name) {
+        if (window.currentSection === name) return;
         window.currentSection = name;
+        sidebar.querySelectorAll('.nav-item').forEach((b) => b.classList.toggle('active', b.dataset.section === name));
         history.replaceState(null, '', '#' + name);
-        if (name === 'maps') window.mapsPrefill();
-        updatePollers();
-        $('sec-' + name).parentElement.scrollTop = 0;
-        window.pushCurrent();
-    };
-
-    // "Confirm & go to ..." buttons at the bottom of each section
-    document.querySelectorAll('[data-next]').forEach((b) => b.addEventListener('click', () => {
-        const sec = b.dataset.next;
-        run.done[sec] = true;
-        saveRun();
-        window.go(NEXT[sec]);
-        toast(`${NAMES[NEXT[sec]]}`, '');
-    }));
-
-    onRun(() => {
-        sidebar.querySelectorAll('.nav-item').forEach((b) => b.classList.toggle('done', !!run.done[b.dataset.section]));
-    });
-
-    // /team = competitor upload page: same file, but only the team view is shown.
-    if (location.pathname.replace(/\/+$/, '') === '/team') {
-        document.body.classList.add('team-mode');
-        document.title = 'Robotics Dojo - Team Map Upload';
-        SECTIONS.forEach((k) => { $('sec-' + k).hidden = true; });
-        $('view-team').hidden = false;
-        window.currentSection = 'team';
-        window.teamStart();
-        return;
+        window.setStageLabel(name);
+        clearTimeout(pushTimer);
+        pushTimer = setTimeout(window.pushCurrent, 400);
     }
 
+    window.go = (name) => {
+        if (!SECTIONS.includes(name)) name = 'home';
+        window.setTimerFs(false);                       // a toast / link from the big timer drops back to the page
+        spyLock = Date.now() + 900;                     // don't let the scroll-spy flicker while we glide there
+        setCurrent(name);
+        $('sec-' + name).scrollIntoView({ behavior: 'smooth', block: 'start' });
+    };
+
+    // visibility (pollers) and scroll-spy (a thin band near the top of the page)
+    const seen = new IntersectionObserver((entries) => {
+        entries.forEach((en) => {
+            const k = en.target.id.slice(4);
+            if (en.isIntersecting) vis.add(k); else vis.delete(k);
+        });
+        updatePollers();
+    }, { root: main });
+    const spy = new IntersectionObserver((entries) => {
+        if (Date.now() < spyLock) return;
+        entries.forEach((en) => { if (en.isIntersecting) setCurrent(en.target.id.slice(4)); });
+    }, { root: main, rootMargin: '-10% 0px -75% 0px' });
+    SECTIONS.forEach((k) => { seen.observe($('sec-' + k)); spy.observe($('sec-' + k)); });
+    main.addEventListener('scroll', () => {
+        if (Date.now() < spyLock) return;
+        if (main.scrollTop + main.clientHeight >= main.scrollHeight - 4) setCurrent('maps');   // last section never reaches the band
+    }, { passive: true });
+
+    window.competitionStart();
     saveRun();      // first render of everything that follows the run
-    window.go(location.hash.slice(1));
+    const first = location.hash.slice(1);
+    if (SECTIONS.includes(first) && first !== 'home') {
+        spyLock = Date.now() + 600;
+        setCurrent(first);
+        requestAnimationFrame(() => $('sec-' + first).scrollIntoView({ block: 'start' }));
+    } else {
+        setCurrent('home');
+    }
 })();

@@ -9,7 +9,7 @@ All ROS terminals need ROS_DOMAIN_ID=62 and RMW_IMPLEMENTATION=rmw_zenoh_cpp
 ### Services
 1. Router startup service
 Lives on the pi
-```(/etc/systemd/system/zenohd-router.service
+```(/etc/systemd/system/zenohd-router.service)
 [Unit]
 Description=Zenoh Router (native rmw_zenoh_cpp router)
 After=network.target

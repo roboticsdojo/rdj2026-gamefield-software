@@ -18,7 +18,7 @@ Dispenser ROS interface (all under /gamefield/loading_station):
 
 Map exchange flow
   1. A judge clicks "Request" on the Map Request panel     -> POST /api/maps/request
-  2. A team's script (or the /team page) sees it            -> GET  /api/maps/pending
+  2. A team's script sees it                                -> GET  /api/maps/pending
   3. The team uploads a PGM map or an RViz screenshot       -> POST /api/maps/upload
   4. The judges' page picks it up while polling             -> GET  /api/maps/status
      PGM files are converted to PNG for display (browsers can't show PGM); the
@@ -701,8 +701,13 @@ class TeamIn(BaseModel):
     name: str
 
 
+# challenges that get their own fastest time on the scoreboard (older runs have none = autonomy)
+COMP_CATEGORIES = {'slam': 'SLAM', 'nav2': 'Nav2', 'autonomy': 'Autonomy'}
+
+
 class CurrentRun(BaseModel):
     team: str = ''
+    category: str = ''
     running: bool = False
     elapsed_ms: int = 0
     section: str = ''
@@ -710,6 +715,7 @@ class CurrentRun(BaseModel):
 
 class RunIn(BaseModel):
     team: str
+    category: str = 'autonomy'    # slam | nav2 | autonomy
     elapsed_ms: int = Field(ge=0)
     total: float = 0          # marks were removed from the judges' page; kept so old clients still post
     scores: dict[str, float] = {}
@@ -756,14 +762,20 @@ async def comp_current(c: CurrentRun):
 
 @comp_router.post('/runs')
 async def comp_add_run(r: RunIn):
-    run = _dump(r) | {'id': uuid.uuid4().hex[:8], 'team': _clean_team(r.team) or 'unknown',
+    cat = (r.category or '').strip().lower()
+    if cat not in COMP_CATEGORIES:
+        cat = 'autonomy'
+    run = _dump(r) | {'id': uuid.uuid4().hex[:8], 'team': _clean_team(r.team) or 'unknown', 'category': cat,
                             'notes': r.notes[:500], 'time': time.time()}
     with _comp_lock:
         d = _comp_data()
         d['runs'].append(run)
         d['current'] = None
         _comp_save()
-    return {'success': True, 'message': f"Saved {run['team']}: {run['total']:g} pts", 'id': run['id']}
+    secs = r.elapsed_ms / 1000
+    return {'success': True,
+            'message': f"Saved {run['team']} ({COMP_CATEGORIES[cat]}): {int(secs // 60):02d}:{secs % 60:04.1f}",
+            'id': run['id']}
 
 
 @comp_router.delete('/runs/{rid}')
@@ -858,12 +870,6 @@ async def get_index():
     if not os.path.exists(TEMPLATE_PATH):
         return FileResponse("index.html")
     return FileResponse(TEMPLATE_PATH)
-
-
-@app.get("/team", response_class=FileResponse)
-async def get_team_page():
-    # Same single page as "/"; app.js sees the /team path and shows only the team upload view.
-    return await get_index()
 
 
 PI_HOST = os.environ.get('DOJO_PI_HOST', 'screen.local')          # the Pi is found by hostname, never by a stored IP
@@ -1011,4 +1017,4 @@ def main():
 
 
 if __name__ == '__main__':
-    main()s
+    main()

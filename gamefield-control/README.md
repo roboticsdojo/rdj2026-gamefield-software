@@ -11,7 +11,7 @@ Tailscale IP: 100.76.206.127
 | Gamefield Screen | live stream + buttons to show Organic / Metal / Plastic | **Yes** |
 | Gamefield Dispenser | state, pieces left, dispense / home / reset / enable / cancel | **Yes** |
 | Obstacle Layout | randomises 3 obstacles on a 3 x 2 grid | No |
-| Map Request | ask a team for its map, detection image or RViz live view | No (the team runs a script or opens `/team`) |
+| Map Request | ask a team for its map |
 | Competition | teams, run times, scoreboard | No |
 
 If the Pi isn't reachable, the screen and dispenser panels just report "unavailable"; the rest works.
@@ -65,7 +65,7 @@ ros2 run web_pi_bridge fastapi_node
 
 Open `http://localhost:8000` on that laptop, or `http://<laptop-ip>:8000` from another PC
 (find the IP with `hostname -I`). The server listens on all interfaces.
-Maps/teams page for competitors: `http://<laptop-ip>:8000/team`.
+
 
 
 
@@ -75,7 +75,9 @@ ros2 service list | grep -E "screen_manager|loading_station"
 curl http://localhost:8000/api/dispenser/status
 ```
 
-Issues
-- random class is only organic
-- low image quality
-- needs more images
+# Testing website locally
+```
+cd gamefield-control/web_pi_bridge/web_pi_bridge
+python3 mock_server.py      #open http://localhost:8000/
+
+```
