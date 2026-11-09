@@ -57,9 +57,9 @@
             <button class="timer" id="timer" type="button" title="Run timer: click for the full screen timer (F)">
                 <span id="timer-display">00:00.0</span>
             </button>
-            <button class="btn btn-go" id="timer-start"><svg class="ic"><use href="#i-play"/></svg><span>Start</span></button>
-            <button class="btn btn-stop" id="timer-stop" disabled><svg class="ic"><use href="#i-stop"/></svg><span>Stop</span></button>
-            <button class="btn btn-accent" id="timer-end" type="button" disabled title="End the run: stop the timer and save the time to the scoreboard"><svg class="ic"><use href="#i-check"/></svg><span>End run</span></button>
+            <button class="btn btn-go" id="timer-start" data-tip="Start"><svg class="ic"><use href="#i-play"/></svg><span>Start</span></button>
+            <button class="btn btn-stop" id="timer-stop" disabled data-tip="Pause"><svg class="ic"><use href="#i-stop"/></svg><span>Stop</span></button>
+            <button class="btn btn-accent" id="timer-end" type="button" disabled data-tip="End run"><svg class="ic"><use href="#i-check"/></svg><span>End run</span></button>
             <button class="icon-btn small" id="timer-expand" type="button" title="Full screen timer (F)" aria-label="Full screen timer"><svg class="ic"><use href="#i-expand"/></svg></button>
         </div>
 
@@ -306,9 +306,9 @@
         <div class="tfs-clock" id="tfs-display">00:00.0</div>
         <div class="tfs-splits" id="tfs-splits"></div>
         <div class="tfs-controls">
-            <button class="btn tfs-btn btn-go" id="tfs-toggle" type="button"><svg class="ic"><use href="#i-play"/></svg><span>Start</span></button>
-            <button class="btn tfs-btn btn-ghost" id="tfs-reset" type="button"><svg class="ic"><use href="#i-reset"/></svg><span>Reset</span></button>
-            <button class="btn tfs-btn btn-accent" id="tfs-end" type="button" disabled title="End the run: stop the timer and save the time to the scoreboard"><svg class="ic"><use href="#i-check"/></svg><span>End run</span></button>
+            <button class="btn tfs-btn btn-go" id="tfs-toggle" type="button" data-tip="Start"><svg class="ic"><use href="#i-play"/></svg><span>Start</span></button>
+            <button class="btn tfs-btn btn-ghost" id="tfs-reset" type="button" data-tip="Reset"><svg class="ic"><use href="#i-reset"/></svg><span>Reset</span></button>
+            <button class="btn tfs-btn btn-accent" id="tfs-end" type="button" disabled data-tip="End run"><svg class="ic"><use href="#i-check"/></svg><span>End run</span></button>
         </div>
         <div class="tfs-keys"><span><kbd>Space</kbd> start / stop</span><span><kbd>R</kbd> reset</span><span><kbd>F</kbd> / <kbd>Esc</kbd> collapse</span><span><kbd>S</kbd> scoreboard</span></div>
     </div>

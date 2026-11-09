@@ -90,7 +90,7 @@ function toast(title, msg, actionLabel, action, ms, tag) {
     x.addEventListener('click', close);
     t.appendChild(x);
     $('toasts').appendChild(t);
-    setTimeout(close, ms || (actionLabel ? 12000 : 5000));
+    setTimeout(close, ms || 2000);
 }
 
 // ======================================================================
@@ -154,7 +154,7 @@ const mapsUnlocked = () => !run.running && run.stoppedMs !== null;
         saveRun();
         window.pushCurrent();
         // the only notification left: an offer (not an automatic switch) to open the big timer
-        if (!fsOpen) toast('Full screen timer', 'Press F, or open it here.', 'Full screen', () => window.setTimerFs(true), 6000, 'fs');
+        if (!fsOpen) toast('Full screen timer', 'Press F, or open it here.', 'Full screen', () => window.setTimerFs(true), 2000, 'fs');
     };
 
     window.stopRun = () => {
@@ -229,6 +229,8 @@ const mapsUnlocked = () => !run.running && run.stoppedMs !== null;
         $('timer-start').disabled = run.running;
         $('timer-stop').disabled = !run.running;
         $('timer-start').querySelector('span').textContent = resume ? 'Resume' : 'Start';
+        $('timer-start').title = resume ? 'Resume' : 'Start';          // hover labels: Start / Pause / End run
+        $('timer-stop').title = 'Pause';
         $('home-start').disabled = run.running;
         const canEnd = !!run.team && (run.running || run.elapsedMs > 0);       // something has been timed
         $('timer-end').disabled = !canEnd;
@@ -243,6 +245,9 @@ const mapsUnlocked = () => !run.running && run.stoppedMs !== null;
         tg.className = 'btn tfs-btn ' + (run.running ? 'btn-stop' : 'btn-go');
         tg.querySelector('use').setAttribute('href', run.running ? '#i-stop' : '#i-play');
         tg.querySelector('span').textContent = run.running ? 'Stop' : resume ? 'Resume' : 'Start';
+        tg.dataset.tip = run.running ? 'Pause' : resume ? 'Resume' : 'Start';           // hover labels
+        $('timer-start').dataset.tip = resume ? 'Resume' : 'Start';
+        tg.title = run.running ? 'Pause' : resume ? 'Resume' : 'Start';
         fsEl.classList.toggle('stopped', resume);
 
         $('tfs-splits').replaceChildren(...[['Loaded', run.loadedMs], ['Stopped', run.stoppedMs]]
@@ -978,10 +983,10 @@ const mapsUnlocked = () => !run.running && run.stoppedMs !== null;
             saveRun();
             window.competitionRefresh();
             window.go('home');
-            toast(`Run saved for ${saved.team}`, `${saved.cat} · ${saved.time}`, '', null, 5000, 'saved');
+            toast(`Run saved for ${saved.team}`, `${saved.cat} · ${saved.time}`, '', null, 2000, 'saved');
         } catch (e) {
             console.error('Could not save the run', e);      // the run stays in the browser; try End run again
-            toast('Could not save the run', 'Check the web bridge is running, then press End run again.', '', null, 6000, 'saved');
+            toast('Could not save the run', 'Check the web bridge is running, then press End run again.', '', null, 4000, 'saved');
         }
     };
     $('finalize').addEventListener('click', window.endRun);
