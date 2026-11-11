@@ -4,14 +4,17 @@ from contextlib import asynccontextmanager
 from typing import Optional
 
 from fastapi import FastAPI, HTTPException, Response, WebSocket, WebSocketDisconnect, Depends, Cookie
-from app.auth import verify_password, create_session
+from app.auth import verify_password, create_session, get_current_judge
 from app.db import get_db
-from app.models import GamefieldCommand, LoginRequest
+from app.models import (GamefieldCommand, LoginRequest, GameInitializationRequest, )
 from .connection_manager import GamefieldIOManager
+from app.game_state import game_state_manager
+from app.game_initialization import clear_test_runs
 
 import rclpy
 from rclpy.node import Node
 from screen_interfaces.srv import SetDisplayClass
+from passlib.exc import UnknownHashError
 
 class FastAPIInterfaceNode(Node):
     """ROS 2 client node for the Pi's screen_manager_node services."""
@@ -123,8 +126,33 @@ async def gamefield_status():
     return {"io_client_connected": manager.connected}
 
 
+@app.post("/gamefield/initialize")
+def initialize_game(
+    request: GameInitializationRequest,
+    current_judge=Depends(get_current_judge),
+):
+    deleted_test_runs = 0
 
-from passlib.exc import UnknownHashError
+    # Clear test data only when explicitly requested.
+    if request.clear_test_data:
+        conn = get_db()
+
+        try:
+            deleted_test_runs = clear_test_runs(conn)
+        finally:
+            conn.close()
+
+    # Update game state only after database cleanup succeeds.
+    state = game_state_manager.initialize(
+        duration_seconds=request.duration_seconds
+    )
+
+    return {
+        "message": "Game initialized successfully",
+        "deleted_test_runs": deleted_test_runs,
+        "game_state": state,
+    }
+
 
 @app.post("/auth/login")
 def login(credentials: LoginRequest, response: Response):
