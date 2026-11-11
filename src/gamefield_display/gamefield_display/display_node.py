@@ -91,6 +91,12 @@ class DisplayNode(Node):
             response.success = False
             response.message = f"failed to read {filename}: {exc}"
             return response
+        
+         # NEW: fail if no display page is connected
+        if not self.relay.clients:
+            response.success = False
+            response.message = "no display page connected"
+            return response
 
         self.relay.broadcast_threadsafe({
             "action": "show_item",

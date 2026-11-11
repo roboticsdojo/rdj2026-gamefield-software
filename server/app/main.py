@@ -4,35 +4,42 @@ from contextlib import asynccontextmanager
 from typing import Optional
 
 from fastapi import FastAPI, HTTPException, Response, WebSocket, WebSocketDisconnect, Depends, Cookie
-from app.auth import verify_password, create_session
+from app.auth import verify_password, create_session, get_current_judge
 from app.db import get_db
-from app.models import GamefieldCommand, LoginRequest
+from app.models import (GamefieldCommand, LoginRequest, GameInitializationRequest, )
 from .connection_manager import GamefieldIOManager
+from app.game_state import game_state_manager
+from app.game_initialization import clear_test_runs
 
 import rclpy
 from rclpy.node import Node
-from gamefield_server_interfaces.srv import DisplayImage
-
+from screen_interfaces.srv import SetDisplayClass
+from passlib.exc import UnknownHashError
 
 class FastAPIInterfaceNode(Node):
-    """Isolated ROS 2 node running a service client alongside FastAPI."""
+    """ROS 2 client node for the Pi's screen_manager_node services."""
+
     def __init__(self):
         super().__init__('fastapi_ros2_interface_bridge')
-        self.cli = self.create_client(DisplayImage, '/gamefield/display_image')
+        self.class_cli = self.create_client(
+            SetDisplayClass, '/screen_manager_node/set_display_class'
+        )
 
-    def call_display_service(self, image_name: str, timeout: float = 5.0):
-        if not self.cli.service_is_ready():
-            return {"success": False, "message": "Pi ROS 2 display service not yet available"}
+    def set_display_class(self, category: str, timeout: float = 5.0):
+        if not self.class_cli.service_is_ready():
+            return {"success": False, "message": "screen_manager_node service not available"}
 
-        req = DisplayImage.Request()
-        req.image_name = image_name
+        req = SetDisplayClass.Request()
+        req.category = category
 
-        future = self.cli.call_async(req)
-        done_event = threading.Event()
-        future.add_done_callback(lambda _f: done_event.set())
+        future = self.class_cli.call_async(req)
+        done = threading.Event()
+        future.add_done_callback(lambda _f: done.set())
 
-        if not done_event.wait(timeout=timeout):
-            return {"success": False, "message": f"No response from display service within {timeout}s"}
+        if not done.wait(timeout=timeout):
+            return {"success": False, "message": f"no response within {timeout}s"}
+        if future.exception() is not None:
+            return {"success": False, "message": f"service call failed: {future.exception()}"}
 
         result = future.result()
         return {"success": result.success, "message": result.message}
@@ -94,33 +101,20 @@ async def control_barrier(command: GamefieldCommand):
 
 @app.post("/gamefield/screen")
 async def control_screen(command: GamefieldCommand):
-    global ros_node
     if ros_node is None:
         raise HTTPException(status_code=500, detail="ROS 2 client node not initialized")
 
-    image_id = command.payload.get("image_id") if isinstance(command.payload, dict) else None
-    if not image_id:
-        raise HTTPException(status_code=400, detail="payload must include 'image_id'")
-
-    conn = get_db()
-    cur = conn.cursor()
-    cur.execute("SELECT filename FROM image_assets WHERE id = %s", (image_id,))
-    asset_record = cur.fetchone()
-    conn.close()
-
-    if not asset_record:
-        raise HTTPException(status_code=404, detail=f"image asset id {image_id} not found")
-
-    target_filename = asset_record["filename"]
+    category = command.payload.get("category") if isinstance(command.payload, dict) else None
+    if not category:
+        raise HTTPException(status_code=400, detail="payload must include 'category'")
 
     loop = asyncio.get_running_loop()
-    ros_result = await loop.run_in_executor(None, ros_node.call_display_service, target_filename)
+    result = await loop.run_in_executor(None, ros_node.set_display_class, category)
 
-    if not ros_result["success"]:
-        raise HTTPException(status_code=502, detail=ros_result["message"])
+    if not result["success"]:
+        raise HTTPException(status_code=502, detail=result["message"])
 
-    return {"status": "synchronized", "filename": target_filename, "detail": ros_result["message"]}
-
+    return {"status": "ok", "category": category, "detail": result["message"]}
 
 @app.post("/gamefield/audience_screen")
 async def control_audience_screen(command: GamefieldCommand):
@@ -132,30 +126,90 @@ async def gamefield_status():
     return {"io_client_connected": manager.connected}
 
 
+@app.post("/gamefield/initialize")
+def initialize_game(
+    request: GameInitializationRequest,
+    current_judge=Depends(get_current_judge),
+):
+    deleted_test_runs = 0
+
+    # Clear test data only when explicitly requested.
+    if request.clear_test_data:
+        conn = get_db()
+
+        try:
+            deleted_test_runs = clear_test_runs(conn)
+        finally:
+            conn.close()
+
+    # Update game state only after database cleanup succeeds.
+    state = game_state_manager.initialize(
+        duration_seconds=request.duration_seconds
+    )
+
+    return {
+        "message": "Game initialized successfully",
+        "deleted_test_runs": deleted_test_runs,
+        "game_state": state,
+    }
+
+
 @app.post("/auth/login")
-async def login(credentials: LoginRequest, response: Response):
+def login(credentials: LoginRequest, response: Response):
     conn = get_db()
-    cur = conn.cursor()
-    cur.execute(
-        "SELECT judge_id, password_hash FROM judges WHERE username = %s",
-        (credentials.username,),
-    )
-    judge = cur.fetchone()
-    conn.close()
 
-    if not judge or not verify_password(credentials.password, judge["password_hash"]):
-        raise HTTPException(status_code=401, detail="Invalid username or password")
+    try:
+        cur = conn.cursor()
+        cur.execute(
+            """
+            SELECT judge_id, password_hash
+            FROM judges
+            WHERE username = %s
+            """,
+            (credentials.username,),
+        )
+        judge = cur.fetchone()
 
-    session_id, expires_at = create_session(judge["judge_id"])
+        if not judge:
+            raise HTTPException(
+                status_code=401,
+                detail="Invalid username or password",
+            )
 
-    response.set_cookie(
-        key="session_id",
-        value=session_id,
-        httponly=True,
-        samesite="lax",
-        expires=expires_at,
-    )
-    return {"logged_in": True}
+        try:
+            password_valid = verify_password(
+                credentials.password,
+                judge["password_hash"],
+            )
+        except (UnknownHashError, ValueError, TypeError):
+            password_valid = False
+
+        if not password_valid:
+            raise HTTPException(
+                status_code=401,
+                detail="Invalid username or password",
+            )
+
+        # Pass the connection required by create_session().
+        session_id, expires_at = create_session(
+            judge["judge_id"],
+            conn,
+        )
+
+        response.set_cookie(
+            key="session_id",
+            value=session_id,
+            httponly=True,
+            samesite="lax",
+            expires=expires_at,
+            secure=True,  # Set True when serving over HTTPS.
+        )
+
+        return {"logged_in": True}
+
+    finally:
+        conn.close()
+
 
 
 @app.post("/auth/logout")

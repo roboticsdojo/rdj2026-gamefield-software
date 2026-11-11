@@ -15,8 +15,8 @@ INSERT INTO robots (team_id, robot_name, length_cm, width_cm, height_cm, max_vol
 INSERT INTO judges (username, password_hash, full_name, display_name, role) VALUES
     ('dr_aoki', '$2b$12$...', 'Dr. Aoki', 'Dr. Aoki', 'Head Judge');
 
-INSERT INTO runs (team_id, robot_id, round_id, assigned_item_id, restart_used)
-VALUES (1, 1, 1, 2, FALSE);  -- assigned plastic bottles
+INSERT INTO runs (team_id, robot_id, round_id, assigned_item_id, restart_used, is_test)
+VALUES (1, 1, 1, 2, FALSE, TRUE);  -- assigned plastic bottles
 
 -- Telemetry
 INSERT INTO run_events (run_id, event_type, offset_seconds) VALUES
