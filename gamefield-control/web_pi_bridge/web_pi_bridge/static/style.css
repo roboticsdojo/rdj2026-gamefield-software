@@ -418,30 +418,6 @@ html[data-theme="dark"] .class-btn:not(.active) { color: color-mix(in srgb, var(
 .obs-cell.has-obstacle .obs-block { transform: scale(1); }
 .obs-cell.has-obstacle .obs-name { color: var(--deep); }
 
-/* ===================================================================== maps */
-.maps-request { display: flex; flex-wrap: wrap; gap: 8px; }
-.maps-request input { flex: 1; min-width: 140px; }
-.maps-requests { display: flex; flex-direction: column; gap: 6px; margin: 10px 0; }
-.req { display: flex; align-items: center; justify-content: space-between; gap: 8px; padding: 6px 10px; border-radius: 8px; font-size: 0.85rem; background: var(--surface-2); }
-.req-pending { border-left: 3px solid var(--accent); }
-.req-fulfilled { border-left: 3px solid var(--ok); }
-.req-failed { border-left: 3px solid var(--bad); color: var(--bad); }
-.req-cancelled, .req-expired { opacity: 0.6; }
-.maps-body { display: grid; grid-template-columns: minmax(0, 2fr) minmax(0, 1fr); gap: 16px; }
-.maps-viewer { aspect-ratio: 4 / 3; background: #fff; border: 1px solid var(--line); }
-.maps-viewer img { cursor: zoom-in; }
-.maps-viewer .media-empty { color: var(--muted); }
-
-.maps-viewer .media-empty code { background: var(--surface-2); color: var(--ink); }
-.pixelated { image-rendering: pixelated; }
-#maps-meta { font-size: 0.85rem; color: var(--muted); line-height: 1.6; }
-#maps-meta .meta-title { font-weight: 700; color: var(--ink); font-size: 0.95rem; }
-#maps-history { display: grid; grid-template-columns: repeat(3, 1fr); gap: 6px; }
-.thumb { border: 2px solid var(--line); border-radius: 8px; background: #fff; padding: 0; cursor: pointer; overflow: hidden; display: flex; flex-direction: column; font: inherit; }
-.thumb img { width: 100%; aspect-ratio: 1; object-fit: contain; }
-.thumb span { font-size: 0.68rem; padding: 2px 4px; color: #333; background: #f3f3f3; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-.thumb.active { border-color: var(--accent); }
-
 
 /* ===================================================================== toasts */
 .toasts { position: fixed; bottom: 60px; left: 50%; transform: translateX(-50%); display: flex; flex-direction: column; gap: 10px; z-index: 50; width: min(420px, calc(100vw - 32px)); pointer-events: none; }
@@ -466,7 +442,7 @@ html[data-theme="dark"] .class-btn:not(.active) { color: color-mix(in srgb, var(
 
 /* ===================================================================== responsive */
 @media (max-width: 1000px) {
-    .grid-2, .maps-body { grid-template-columns: 1fr; }
+    .grid-2 { grid-template-columns: 1fr; }
     .brand-sub { display: none; }
 }
 @media (max-width: 720px) {
@@ -494,7 +470,7 @@ html[data-theme="dark"] .class-btn:not(.active) { color: color-mix(in srgb, var(
 .main { scroll-padding-top: 24px; padding-bottom: 72px; }
 .section { width: 100%; }
 .section + .section { margin: 28px auto 0; padding-top: 28px; border-top: 1px solid var(--line); }
-#sec-maps { min-height: calc(100vh - 180px); }      /* so "Map Request" can scroll up to the top of the page */
+#sec-end { min-height: calc(100vh - 180px); }       /* so "End Run" can scroll up to the top of the page */
 kbd {
     font-family: "Cascadia Mono", Consolas, monospace; font-size: 0.8em;
     padding: 1px 7px; border-radius: 5px; border: 1px solid currentColor; opacity: 0.85;
@@ -507,13 +483,6 @@ kbd {
 .seg-btn.active { background: var(--accent); color: var(--accent-ink); }
 .seg-btn:disabled { cursor: not-allowed; opacity: 0.6; }
 
-/* map requests are locked until the timer has stopped */
-.lock-note {
-    margin-bottom: 12px; padding: 10px 12px; border-radius: 8px;
-    background: color-mix(in srgb, var(--accent) 16%, transparent); color: var(--deep);
-    font-weight: 600; font-size: 0.9rem;
-}
-html[data-theme="dark"] .lock-note { color: var(--accent); }
 
 /* ===================================================================== top bar: timer + scoreboard */
 .team-chip { max-width: 260px; }
@@ -579,7 +548,7 @@ html[data-theme="dark"] .lock-note { color: var(--accent); }
 /* detection card next to the screen stream */
 .verdict-side { display: flex; flex-direction: column; gap: 14px; align-self: start; }
 .verdict-side h2 { margin: 0; }
-.verdict-side .verdict { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+.verdict-side .verdict { grid-template-columns: 1fr; }
 .verdict-side .check-toggle { grid-column: 1 / -1; }
 
 /* hover labels for the timer buttons (CSS, so they also show on disabled buttons, which native tooltips skip) */

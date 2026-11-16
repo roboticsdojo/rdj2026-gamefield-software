@@ -100,7 +100,7 @@ function toast(title, msg, actionLabel, action, ms, tag) {
 // loses nothing. It is sent to the server only when finalised.
 function newRun(team, category) {
     return { team: team || '', category: category || 'autonomy', running: false, startedAt: 0, elapsedMs: 0, epochStart: 0,
-             displayed: '', detected: '', detConf: null, detId: null,
+             displayed: '',
              correct: null, loadedMs: null, stoppedMs: null, notes: '' };
 }
 let run = Object.assign(newRun(), store.get('dojoRun', {}));
@@ -108,8 +108,6 @@ const runListeners = [];
 function onRun(fn) { runListeners.push(fn); }
 function saveRun() { store.set('dojoRun', run); runListeners.forEach((fn) => fn()); }
 const elapsed = () => (run.running ? Date.now() - run.startedAt : run.elapsedMs);
-// the map is only requested at the end: once the timer has been stopped
-const mapsUnlocked = () => !run.running && run.stoppedMs !== null;
 
 
 // ======================================================================
@@ -119,7 +117,7 @@ const mapsUnlocked = () => !run.running && run.stoppedMs !== null;
     const fsEl = $('timer-fs');
     let fsOpen = false;
     const STAGE_NAME = { home: 'Setup', screen: 'Gamefield screen', loading: 'Loading station',
-                         obstacles: 'Dynamic obstacles', maps: 'Map request' };
+                         obstacles: 'Dynamic obstacles', end: 'End run' };
 
     function tick() {
         const t = fmt(elapsed());
@@ -368,7 +366,8 @@ const mapsUnlocked = () => !run.running && run.stoppedMs !== null;
         }
         [...comp.runs].reverse().forEach((r) => {
             const tr = el('tr');
-            const det = r.displayed ? `${classLabel(normClass(r.displayed))} → ${classLabel(normClass(r.detected))}` : '—';
+            const det = !r.displayed ? '—' : classLabel(normClass(r.displayed)) +
+                (r.correct === true ? ' ✓' : r.correct === false ? ' ✗' : r.detected ? ` → ${classLabel(normClass(r.detected))}` : '');
             const del = el('button', 'del');
             del.title = 'Delete this run';
             del.appendChild(icon('x'));
@@ -439,7 +438,7 @@ const mapsUnlocked = () => !run.running && run.stoppedMs !== null;
 
     $('team-select').addEventListener('change', () => {
         const t = $('team-select').value;
-        const hasData = run.elapsedMs > 0 || run.displayed || run.detected;
+        const hasData = run.elapsedMs > 0 || run.displayed;
         if (hasData && t !== run.team && !confirm(`Discard the run in progress for ${run.team}?`)) {
             $('team-select').value = run.team;
             return;
@@ -473,7 +472,7 @@ const mapsUnlocked = () => !run.running && run.stoppedMs !== null;
 })();
 
 // ======================================================================
-// GAMEFIELD SCREEN + ROBOT DETECTION
+// GAMEFIELD SCREEN + JUDGED ITEM
 // ======================================================================
 (function () {
     let screenShown = 'logo';
@@ -494,7 +493,8 @@ const mapsUnlocked = () => !run.running && run.stoppedMs !== null;
             if (data.success) {
                 screenShown = cls;
                 run.displayed = cls;
-                if (run.detected) setCorrect(run.detected === cls); else saveRun();
+                run.correct = null;                 // a new item is up: judge it again
+                saveRun();
             }
         } catch (e) { setStatus('Error connecting to web bridge'); }
     }
@@ -521,42 +521,6 @@ const mapsUnlocked = () => !run.running && run.stoppedMs !== null;
     }
     $('v-correct').addEventListener('click', () => setCorrect(run.correct !== true));
 
-    $('det-request').addEventListener('click', async () => {
-        if (!run.team) return;
-        $('det-status').textContent = 'Asking the robot for its detection…';
-        try {
-            const data = await api('/api/maps/request', { format: 'detection', team: run.team });
-            $('det-status').textContent = data.message;
-        } catch (e) { $('det-status').textContent = 'Error connecting to web bridge'; }
-    });
-
-    // Detection results arrive through the map exchange (kind = 'detection'); the maps
-    // poller hands every status poll to this function.
-    let known = null;
-    window.screenOnMaps = (status) => {
-        const team = (run.team || '').toLowerCase();
-        // this team's detections from this run (60 s slack for clock differences)
-        const dets = status.maps.filter((m) => m.kind === 'detection' && m.team.toLowerCase() === team &&
-                                              (!run.epochStart || m.time * 1000 > run.epochStart - 60000));
-        const ids = new Set(status.maps.filter((m) => m.kind === 'detection').map((m) => m.id));
-        const fresh = known === null ? [] : dets.filter((m) => !known.has(m.id));
-        known = ids;
-        if (fresh.length && (run.running || run.elapsedMs)) {
-            const m = fresh[0];
-            run.detId = m.id;
-            run.detected = normClass(m.label);
-            run.detConf = m.confidence;
-            if (run.displayed && run.detected) setCorrect(run.detected === run.displayed); else saveRun();
-        }
-        const shown = dets.find((m) => m.id === run.detId) || (run.detId ? null : dets[0]);
-        renderDetection(shown);
-    };
-
-    function renderDetection(m) {
-        if (m) $('det-status').textContent = `Detection received ${new Date(m.time * 1000).toLocaleTimeString()}`;
-    }
-
-
     function renderScreenFeed() {
         // only load the gamefield screen's MJPEG feed while the section is on screen, it eats bandwidth
         const screen = $('live-stream');
@@ -570,8 +534,6 @@ const mapsUnlocked = () => !run.running && run.stoppedMs !== null;
             b.classList.toggle('active', normClass(b.dataset.cat) === screenShown);
         });
         $('v-displayed').textContent = classLabel(run.displayed);
-        $('v-detected').textContent = run.detected ? classLabel(run.detected) +
-            (run.detConf !== null && run.detConf !== undefined ? ` (${Math.round(run.detConf * 100)}%)` : '') : '—';
         const c = $('v-correct');
         c.setAttribute('aria-pressed', String(run.correct === true));
         c.classList.toggle('wrong', run.correct === false);
@@ -808,156 +770,6 @@ const mapsUnlocked = () => !run.running && run.stoppedMs !== null;
 })();
 
 // ======================================================================
-// MAP REQUEST PANEL, judges - talks to /api/maps/*
-// ======================================================================
-(function () {
-    const FORMAT_LABEL = { pgm: 'PGM map', screenshot: 'RViz screenshot', any: 'Either',
-                           detection: 'Detection image' };
-
-    let maps = [];
-    let known = null;          // ids already seen (null until first poll)
-    let selectedId = null;
-    let followLatest = true;
-    let historySig = '';
-
-    function setStatus(t) { $('maps-status').textContent = t; }
-    const ago = (s) => (s < 60 ? `${s}s` : `${Math.floor(s / 60)}m ${s % 60}s`);
-
-    async function sendRequest(format, team) {
-        if (!mapsUnlocked()) return;
-        setStatus('Sending request…');
-        try {
-            const data = await api('/api/maps/request', { format, team });
-            setStatus(data.message);
-        } catch (e) { setStatus('Error connecting to web bridge'); }
-        poll();
-    }
-    $('maps-request-btn').addEventListener('click', () => sendRequest($('maps-format').value, $('maps-team').value));
-
-
-    async function cancel(id) {
-        try { await api(`/api/maps/request/${id}/cancel`, {}); } catch (e) { /* next poll shows state */ }
-        poll();
-    }
-
-    function renderRequests(reqs) {
-        const box = $('maps-requests');
-        box.replaceChildren();
-        reqs.slice(0, 4).forEach((r) => {
-            const row = el('div', 'req req-' + r.status);
-            let text = `${FORMAT_LABEL[r.format]} · ${r.team || 'any team'} · `;
-            if (r.status === 'pending') text += `WAITING ${ago(r.age_s)}`;
-            else if (r.status === 'fulfilled') text += `received from ${r.answered_by}`;
-            else if (r.status === 'failed') text += `FAILED (${r.answered_by}): ${r.message || 'no reason given'}`;
-            else text += r.status;
-            row.appendChild(el('span', '', text));
-            if (r.status === 'pending') {
-                const b = el('button', 'btn btn-ghost btn-sm', 'Cancel');
-                b.addEventListener('click', () => cancel(r.id));
-                row.appendChild(b);
-            }
-            box.appendChild(row);
-        });
-    }
-
-    function select(id, fromUser) {
-        selectedId = id;
-        if (fromUser) followLatest = maps.length > 0 && maps[0].id === id;
-        renderViewer();
-        renderHistory();
-    }
-
-    function renderViewer() {
-        const m = maps.find((x) => x.id === selectedId);
-        const img = $('maps-img');
-        $('maps-empty').hidden = !!m;
-        img.hidden = !m;
-        const actions = $('maps-actions');
-        actions.replaceChildren();
-        if (!m) { $('maps-meta').textContent = '—'; return; }
-
-        if (img.dataset.id !== m.id) { img.src = m.display_url + '?v=' + m.id; img.dataset.id = m.id; }
-        img.className = m.kind === 'pgm' ? 'pixelated' : '';
-        img.onclick = () => window.open(m.display_url, '_blank');
-
-        const lines = [`${m.team} · ${m.kind === 'pgm' ? 'PGM map' : 'RViz screenshot'}`,
-                       new Date(m.time * 1000).toLocaleTimeString()];
-        if (m.width) lines.push(`${m.width} × ${m.height} px`);
-        if (m.resolution) lines.push(`${m.resolution} m/px`);
-        if (m.origin_x !== null && m.origin_x !== undefined) lines.push(`origin (${m.origin_x}, ${m.origin_y})`);
-        lines.push(m.request_id ? 'answered a request' : 'unrequested');
-        const meta = $('maps-meta');
-        meta.replaceChildren();
-        lines.forEach((l, i) => meta.appendChild(el('div', i === 0 ? 'meta-title' : '', l)));
-
-        const a1 = el('a', 'btn btn-primary btn-sm', m.kind === 'pgm' ? 'Download PNG' : 'Download');
-        a1.href = m.display_url;
-        a1.download = `${m.team}_map.${m.kind === 'pgm' ? 'png' : m.ext}`;
-        actions.appendChild(a1);
-        if (m.kind === 'pgm') {
-            const a2 = el('a', 'btn btn-ghost btn-sm', 'Download PGM');
-            a2.href = m.original_url;
-            actions.appendChild(a2);
-        }
-    }
-
-    function renderHistory() {
-        const box = $('maps-history');
-        box.replaceChildren();
-        maps.slice(0, 12).forEach((m) => {
-            const b = el('button', 'thumb' + (m.id === selectedId ? ' active' : ''));
-            const i = el('img');
-            i.src = m.display_url;
-            i.alt = '';
-            if (m.kind === 'pgm') i.className = 'pixelated';
-            b.appendChild(i);
-            b.appendChild(el('span', '', `${m.team} · ${m.kind === 'pgm' ? 'PGM' : 'shot'}`));
-            b.addEventListener('click', () => select(m.id, true));
-            box.appendChild(b);
-        });
-    }
-
-    function render(s) {
-        renderRequests(s.requests.filter((r) => r.format !== 'detection'));
-        maps = s.maps.filter((m) => m.kind !== 'detection');
-        const ids = new Set(maps.map((m) => m.id));
-        const fresh = known === null ? [] : maps.filter((m) => !known.has(m.id));
-        known = ids;
-        if (fresh.length) {
-            setStatus(`Map received from ${fresh[0].team}`);
-            followLatest = true;
-        }
-        if (followLatest && maps.length) selectedId = maps[0].id;
-        if (selectedId && !ids.has(selectedId)) selectedId = maps.length ? maps[0].id : null;
-        const sig = maps.map((m) => m.id).join();
-        if (sig !== historySig) { historySig = sig; renderHistory(); }
-        renderViewer();
-    }
-
-    async function poll() {
-        try {
-            const s = await api('/api/maps/status');
-            render(s);
-            window.screenOnMaps(s);
-        } catch (e) { setStatus('Error connecting to web bridge'); }
-    }
-
-    let timer = null;
-    window.mapsStart = () => { if (!timer) { poll(); timer = setInterval(poll, 1000); } };
-    window.mapsStop = () => { clearInterval(timer); timer = null; };
-    window.mapsPrefill = () => { if (run.team) $('maps-team').value = run.team; };
-
-    function renderLock() {
-        const ok = mapsUnlocked();
-        $('maps-lock').hidden = ok;
-        ['maps-format', 'maps-team', 'maps-request-btn'].forEach((id) => { $(id).disabled = !ok; });
-        if (run.team && ok && !$('maps-team').value) $('maps-team').value = run.team;
-    }
-    onRun(renderLock);
-    renderLock();
-})();
-
-// ======================================================================
 // FINISH RUN
 // ======================================================================
 (function () {
@@ -975,7 +787,7 @@ const mapsUnlocked = () => !run.running && run.stoppedMs !== null;
         try {
             const r = await api('/api/competition/runs', {
                 team: run.team, category: run.category, elapsed_ms: Math.round(run.elapsedMs), total: 0, scores: {},
-                displayed: run.displayed, detected: run.detected, notes: run.notes,
+                displayed: run.displayed, correct: run.correct, notes: run.notes,
             });
             if (!r.success) throw new Error(r.message);
             const saved = { team: run.team, cat: catLabel(run.category), time: fmt(run.elapsedMs) };
@@ -996,7 +808,7 @@ const mapsUnlocked = () => !run.running && run.stoppedMs !== null;
 // SHELL: sidebar jump links, scroll-spy, theme, pollers - must stay last
 // ======================================================================
 (function () {
-    const SECTIONS = ['home', 'screen', 'loading', 'obstacles', 'maps'];
+    const SECTIONS = ['home', 'screen', 'loading', 'obstacles', 'end'];
     const sidebar = $('sidebar');
     const main = $('main');
     const mobile = () => window.matchMedia('(max-width: 720px)').matches;
@@ -1026,7 +838,6 @@ const mapsUnlocked = () => !run.running && run.stoppedMs !== null;
     const vis = new Set();      // sections currently in view
     function updatePollers() {
         const live = run.running;
-        if (vis.has('screen') || vis.has('maps') || live) window.mapsStart(); else window.mapsStop();
         if (vis.has('loading') || live) window.dispenserStart(); else window.dispenserStop();
         if (vis.has('screen')) window.screenStart(); else window.screenStop();
     }
@@ -1068,7 +879,7 @@ const mapsUnlocked = () => !run.running && run.stoppedMs !== null;
     SECTIONS.forEach((k) => { seen.observe($('sec-' + k)); spy.observe($('sec-' + k)); });
     main.addEventListener('scroll', () => {
         if (Date.now() < spyLock) return;
-        if (main.scrollTop + main.clientHeight >= main.scrollHeight - 4) setCurrent('maps');   // last section never reaches the band
+        if (main.scrollTop + main.clientHeight >= main.scrollHeight - 4) setCurrent('end');   // last section never reaches the band
     }, { passive: true });
 
     window.competitionStart();

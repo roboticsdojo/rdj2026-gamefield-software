@@ -67,10 +67,6 @@ class Handler(BaseHTTPRequestHandler):
                 return self.send_error(403)
         if path == '/api/competition':
             return self.send_json(COMP)
-        if path == '/api/maps/status':
-            return self.send_json({'maps': [], 'requests': [], 'streams': [], 'token_required': False})
-        if path == '/api/maps/pending':
-            return self.send_json({'requests': []})
         if path == '/api/dispenser/status':
             return self.send_json({'online': False, 'status': None, 'goal': None, 'error': 'mock server: no loading station'})
         self.send_json({'success': False, 'message': 'mock server: not implemented'}, 404)
@@ -98,8 +94,6 @@ class Handler(BaseHTTPRequestHandler):
             COMP['current'] = None
             secs = run.get('elapsed_ms', 0) / 1000
             return self.send_json({'success': True, 'message': f"Saved {run.get('team')}: {int(secs // 60):02d}:{secs % 60:04.1f}"})
-        if path.startswith('/api/maps/request'):
-            return self.send_json({'success': True, 'message': 'Mock: request sent (nothing will answer it)'})
         if path in ('/api/set_display_class', '/api/set_display'):
             return self.send_json({'success': True, 'message': 'Mock: screen command accepted'})
         if path.startswith('/api/dispenser/'):
