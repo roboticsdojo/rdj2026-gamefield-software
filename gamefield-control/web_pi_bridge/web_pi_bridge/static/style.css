@@ -376,7 +376,6 @@ html[data-theme="dark"] .class-btn:not(.active) { color: color-mix(in srgb, var(
 .station h3 { margin: 0; display: flex; justify-content: space-between; align-items: center; color: var(--ink); }
 .station .st-class { font-size: 0.75rem; text-transform: none; letter-spacing: 0; padding: 2px 8px; border-radius: 999px; color: #fff; }
 .station .st-class select { all: unset; cursor: pointer; }
-.station .left { font-size: 0.85rem; color: var(--muted); }
 .station-actions { display: flex; gap: 6px; }
 .station-actions .btn { flex: 1; }
 .disp-progress { display: flex; align-items: center; justify-content: space-between; gap: 10px; margin-top: 12px; font-size: 0.9rem; }

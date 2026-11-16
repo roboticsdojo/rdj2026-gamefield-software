@@ -63,6 +63,7 @@ const classLabel = (c) => CLASS_LABEL[c] || '—';
 // Challenges that get a time on the scoreboard. Runs saved before this existed have no category = autonomy.
 const CATS = [['slam', 'SLAM'], ['nav2', 'Nav2'], ['autonomy', 'Behaviour Trees']];
 const catLabel = (c) => (CATS.find((x) => x[0] === c) || CATS[2])[1];
+const NEXT_CHALLENGE = { slam: 'nav2', nav2: 'autonomy' };       // order each team plays them in; Behaviour Trees is last
 const catOf = (r) => (r && (r.category === 'slam' || r.category === 'nav2') ? r.category : 'autonomy');
 
 // true while the user is typing / choosing in a form control (keyboard timer shortcuts stay out of the way)
@@ -99,7 +100,7 @@ function toast(title, msg, actionLabel, action, ms, tag) {
 // The run being tracked lives in this browser (localStorage), so a refresh mid-run
 // loses nothing. It is sent to the server only when finalised.
 function newRun(team, category) {
-    return { team: team || '', category: category || 'autonomy', running: false, startedAt: 0, elapsedMs: 0, epochStart: 0,
+    return { team: team || '', category: category || 'slam', running: false, startedAt: 0, elapsedMs: 0, epochStart: 0,
              displayed: '',
              correct: null, loadedMs: null, stoppedMs: null, notes: '' };
 }
@@ -560,7 +561,6 @@ const elapsed = () => (run.running ? Date.now() - run.startedAt : run.elapsedMs)
             <h3><span>STATION ${n}</span><span class="st-class"><select aria-label="Waste class of station ${n}">
                 <option value="organic">Organic</option><option value="metal">Metal</option><option value="plastic">Plastic</option>
             </select></span></h3>
-            <div class="left">- left</div>
             <div class="station-actions">
                 <button class="btn btn-primary">Dispense</button>
             </div>`;
@@ -647,7 +647,7 @@ const elapsed = () => (run.running ? Date.now() - run.startedAt : run.elapsedMs)
             st.remaining.forEach((r, i) => {
                 const was = p.remaining[i];
                 if (was !== undefined && r < was) loaded(`Station ${i + 1} dispensed ${was - r} piece${was - r > 1 ? 's' : ''}`);
-                else if (was !== undefined && r > was) log(`Station ${i + 1} refilled (${r} left)`);
+                else if (was !== undefined && r > was) log(`Station ${i + 1} refilled`);
             });
         }
         const g = snap.goal, pg = prev.goal;
@@ -673,10 +673,8 @@ const elapsed = () => (run.running ? Date.now() - run.startedAt : run.elapsedMs)
 
         const idle = state === 'IDLE';
         const busy = state === 'DISPENSING' || state === 'HOMING';
-        document.querySelectorAll('.station').forEach((card, i) => {
-            const left = st && st.remaining[i] !== undefined ? st.remaining[i] : null;
-            card.querySelector('.left').textContent = left === null ? '- left' : `${left} left`;
-            card.querySelector('.station-actions button').disabled = !idle || left === 0;
+        document.querySelectorAll('.station').forEach((card) => {
+            card.querySelector('.station-actions button').disabled = !idle;
         });
 
         $('disp-enable').textContent = enabled ? 'Disable' : 'Enable';
@@ -791,11 +789,14 @@ const elapsed = () => (run.running ? Date.now() - run.startedAt : run.elapsedMs)
             });
             if (!r.success) throw new Error(r.message);
             const saved = { team: run.team, cat: catLabel(run.category), time: fmt(run.elapsedMs) };
-            run = newRun('', run.category);
+            // a team does SLAM, then Nav2, then Behaviour Trees in a row: keep the team and move on to the
+            // next challenge, and only clear the team once Behaviour Trees is done
+            const next = NEXT_CHALLENGE[run.category];
+            run = next ? newRun(saved.team, next) : newRun('', 'slam');
             saveRun();
             window.competitionRefresh();
             window.go('home');
-            toast(`Run saved for ${saved.team}`, `${saved.cat} · ${saved.time}`, '', null, 2000, 'saved');
+            toast(`Run saved for ${saved.team}`, `${saved.cat} · ${saved.time}` + (next ? ` · up next: ${catLabel(next)}` : ''), '', null, 2000, 'saved');
         } catch (e) {
             console.error('Could not save the run', e);      // the run stays in the browser; try End run again
             toast('Could not save the run', 'Check the web bridge is running, then press End run again.', '', null, 4000, 'saved');
