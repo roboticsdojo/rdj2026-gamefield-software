@@ -562,3 +562,87 @@ kbd {
 }
 [data-tip]:hover::after { opacity: 1; transition-delay: 0.2s; }
 .tfs-controls [data-tip]::after { top: auto; bottom: calc(100% + 8px); background: #ffecd1; color: #001524; }
+/* ===================================================================== barrier: ultrasonic radar + gate */
+.badge-live { background: var(--ok); }
+.badge-gate-closed { background: var(--deep); }
+.badge-gate-open { background: var(--ok); }
+.badge-gate-opening, .badge-gate-closing, .badge-gate-initializing { background: var(--accent); color: #001524; }
+.badge-gate-fault { background: var(--bad); }
+.badge-gate-unknown { background: var(--muted); }
+
+/* radar scope: dark like the screen stream, so it reads the same in light and dark mode */
+.radar {
+    --scope: #8fd694;                      /* sweep + grid green (same as the log's "ok") */
+    position: relative;
+    border-radius: 10px;
+    background: radial-gradient(ellipse at 50% 90%, #04263a 0%, #000c14 75%);
+    overflow: hidden;
+}
+.radar svg { display: block; width: 100%; height: auto; }
+.radar-grid path, .radar-grid line { fill: none; stroke: var(--scope); stroke-opacity: 0.28; stroke-width: 1; }
+.radar-grid .base { stroke-opacity: 0.5; }
+.radar-grid text { fill: var(--scope); fill-opacity: 0.7; font-size: 10px; font-family: "Cascadia Mono", Consolas, monospace; stroke: none; text-anchor: middle; }
+.radar-field { fill: var(--accent); fill-opacity: 0.1; stroke: var(--accent); stroke-opacity: 0.85; stroke-width: 1.5; stroke-dasharray: 5 4; }
+
+.radar-sweep { transform-origin: 200px 200px; animation: radar-sweep 4.5s ease-in-out infinite alternate; animation-play-state: paused; opacity: 0; transition: opacity 0.3s; }
+.radar-sweep line { stroke: var(--scope); stroke-linecap: round; }
+.radar-sweep .beam { stroke-width: 2; }
+.radar-sweep .glow { stroke-width: 14; stroke-opacity: 0.14; }
+.radar[data-live="true"] .radar-sweep { opacity: 1; animation-play-state: running; }
+@keyframes radar-sweep { from { transform: rotate(-82deg); } to { transform: rotate(82deg); } }
+
+.radar-blip .dot { fill: var(--scope); }
+.radar-blip .pulse { fill: none; stroke: var(--scope); stroke-width: 2; transform-box: fill-box; transform-origin: center; animation: radar-ping 1.4s ease-out infinite; }
+.radar[data-state="in-field"] .radar-blip .dot { fill: var(--accent); }
+.radar[data-state="in-field"] .radar-blip .pulse { stroke: var(--accent); }
+.radar[data-state="object"] .radar-blip .pulse { animation: none; opacity: 0; }
+@keyframes radar-ping { from { transform: scale(0.6); opacity: 0.9; } to { transform: scale(2.6); opacity: 0; } }
+
+.radar[data-state="in-field"] { box-shadow: 0 0 0 2px var(--accent); }
+.radar[data-state="offline"] svg { opacity: 0.35; }
+.radar-off {
+    position: absolute; inset: 0; display: none; place-items: center;
+    color: #9cb2bc; font-size: 0.85rem; font-weight: 700; letter-spacing: 0.12em; text-transform: uppercase;
+}
+.radar[data-state="offline"] .radar-off { display: grid; }
+
+.radar-read {
+    display: flex; align-items: center; justify-content: space-between; gap: 12px;
+    margin-top: 12px; padding: 10px 14px;
+    border-radius: 10px; background: var(--surface-2);
+    border-left: 4px solid var(--muted);
+}
+.radar-read > div { display: flex; flex-direction: column; gap: 2px; min-width: 0; }
+.radar-read b { font-size: 1.15rem; }
+.radar-dist { font-family: "Cascadia Mono", Consolas, monospace; font-size: 1.5rem; font-weight: 700; font-variant-numeric: tabular-nums; white-space: nowrap; }
+.radar-read[data-state="clear"] { border-left-color: var(--ok); }
+.radar-read[data-state="clear"] b { color: var(--ok); }
+.radar-read[data-state="in-field"] { border-left-color: var(--accent); background: color-mix(in srgb, var(--accent) 16%, transparent); }
+.radar-read[data-state="in-field"] b { color: var(--deep); }
+html[data-theme="dark"] .radar-read[data-state="in-field"] b { color: var(--accent); }
+.radar-legend { display: flex; align-items: center; gap: 8px; margin: 10px 0 0; }
+.radar-legend .sw { width: 16px; height: 10px; border-radius: 3px; border: 1.5px dashed var(--accent); background: color-mix(in srgb, var(--accent) 14%, transparent); }
+
+/* gate: housing on the left, striped arm slides out of it (CLOSED) or back in (OPEN) */
+.gate { padding: 10px; border-radius: 10px; background: var(--surface-2); }
+.gate svg { display: block; width: 100%; max-width: 420px; height: auto; margin: 0 auto; }
+.gate-ground { fill: color-mix(in srgb, var(--ink) 25%, transparent); }
+.gate-post { fill: var(--primary); }
+.gate-sensor { fill: color-mix(in srgb, #000 35%, var(--primary)); }
+.gate-eye { fill: #cfe3e6; stroke: #001524; stroke-width: 1.5; }
+.gate-rest { fill: var(--muted); }
+.gate-arm { transition: transform 1s ease-in-out; }
+.gate[data-pose="retracted"] .gate-arm { transform: translateX(-134px); }
+.gate[data-known="false"] .gate-arm { opacity: 0.45; }
+.gate-actions { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; margin-top: 14px; }
+.gate-info { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 10px; margin-top: 12px; }
+.gate-info > div { display: flex; flex-direction: column; gap: 2px; min-width: 0; }
+.gate-info b { font-size: 1rem; font-variant-numeric: tabular-nums; overflow-wrap: anywhere; }
+.gate-info .bad b { color: var(--bad); }
+.gate-hint { margin: 10px 0 0; padding: 8px 12px; border-radius: 8px; font-size: 0.85rem; background: color-mix(in srgb, var(--bad) 12%, transparent); color: var(--bad); }
+.log-short { height: 170px; }
+
+@media (prefers-reduced-motion: reduce) {
+    .radar-sweep, .radar-blip .pulse { animation: none; }
+    .gate-arm { transition: none; }
+}

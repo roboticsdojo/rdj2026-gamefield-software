@@ -8,6 +8,8 @@
 It serves index.html, /static and /logos exactly like the real server and answers the /api calls with
 harmless fake data (teams and finished runs are kept in memory until you stop it).
 The loading station shows OFFLINE and the screen / robot feeds stay empty, as they would without hardware.
+The barrier is simulated (a robot drives past its ultrasonic sensor every 20 s; open / close / reset work),
+sending the same JSON as the real /api/barrier/status.
 """
 import json
 import mimetypes
@@ -20,6 +22,27 @@ from urllib.parse import unquote, urlparse
 
 HERE = Path(__file__).resolve().parent
 COMP = {'teams': [], 'runs': [], 'current': None}
+
+# ---- fake barrier: same shape as the real /api/barrier/status
+BARRIER = {'state': 'CLOSED', 'target': 'CLOSED', 'until': 0.0}
+
+
+def barrier_snapshot():
+    now = time.time()
+    if BARRIER['until'] and now >= BARRIER['until']:
+        BARRIER['state'], BARRIER['until'] = BARRIER['target'], 0.0
+    t = now % 20                       # a robot drives past the sensor: 90 cm -> 10 cm -> 90 cm, then nothing
+    dist = int(10 + abs(t - 4) * 20) if t < 8 else -1
+    angle = {'OPEN': 90, 'CLOSED': 0}.get(BARRIER['state'], 45)
+    return {'online': True, 'events': [],
+            'status': {'connected': True, 'state': BARRIER['state'], 'angle': angle, 'pot': 512,
+                       'distance_cm': dist, 'sequence': 'IDLE', 'fault': 'NONE'}}
+
+
+def barrier_move(target, moving):
+    BARRIER.update(state=moving, target=target, until=time.time() + 1.0)
+    time.sleep(1.0)                    # the real service answers once the gate has arrived
+    barrier_snapshot()
 
 
 class Handler(BaseHTTPRequestHandler):
@@ -67,6 +90,8 @@ class Handler(BaseHTTPRequestHandler):
                 return self.send_error(403)
         if path == '/api/competition':
             return self.send_json(COMP)
+        if path == '/api/barrier/status':
+            return self.send_json(barrier_snapshot())
         if path == '/api/dispenser/status':
             return self.send_json({'online': False, 'status': None, 'goal': None, 'error': 'mock server: no loading station'})
         self.send_json({'success': False, 'message': 'mock server: not implemented'}, 404)
@@ -96,6 +121,11 @@ class Handler(BaseHTTPRequestHandler):
             return self.send_json({'success': True, 'message': f"Saved {run.get('team')}: {int(secs // 60):02d}:{secs % 60:04.1f}"})
         if path in ('/api/set_display_class', '/api/set_display'):
             return self.send_json({'success': True, 'message': 'Mock: screen command accepted'})
+        if path in ('/api/barrier/open', '/api/barrier/close', '/api/barrier/reset'):
+            cmd = path.rsplit('/', 1)[1]
+            target = 'OPEN' if cmd == 'open' else 'CLOSED'
+            barrier_move(target, 'OPENING' if cmd == 'open' else 'CLOSING')
+            return self.send_json({'success': True, 'message': f'Barrier {target.lower()}' if cmd != 'reset' else 'Barrier closed'})
         if path.startswith('/api/dispenser/'):
             return self.send_json({'success': False, 'message': 'Mock: no loading station'})
         self.send_json({'success': False, 'message': 'mock server: not implemented'}, 404)

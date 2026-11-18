@@ -3,6 +3,7 @@
 Sections
   1. Screen bridge      ROS node + /api/set_display*  (Pi screen_manager_node)
   2. Dispenser bridge   ROS node + /api/dispenser/*   (loading station)
+  2b. Barrier bridge    ROS node + /api/barrier/*     (gamefield_barrier: servo gate + ultrasonic)
   3. Helpers            where competition.json is stored, team-name cleanup
   4. Competition        /api/competition/*  (teams, finished runs = scoreboard, current run)
   5. App                lifespan, routers, static files, logos, page, main()
@@ -19,6 +20,14 @@ Dispenser ROS interface (all under /gamefield/loading_station):
   service  reset     std_srvs/srv/Trigger
   topic    status    loading_station_interfaces/msg/StationStatus (latched)
 
+Barrier ROS interface (all under /gamefield/barrier, published by the gamefield_barrier node
+that talks to the Arduino; standard messages only, no extra interface package):
+  service  open     std_srvs/srv/Trigger    blocks until the gate is OPEN (or fails)
+  service  close    std_srvs/srv/Trigger    blocks until the gate is CLOSED (or fails)
+  service  reset    std_srvs/srv/Trigger    clears a FAULT and re-initialises to CLOSED
+  topic    status   std_msgs/msg/String     JSON {connected, state, angle, pot, distance_cm, sequence, fault}, ~2 Hz
+  topic    event    std_msgs/msg/String     one line per event: "MANUAL:OPEN", "SEQ:START (from CLOSED)", ...
+
 Environment
   DOJO_MAP_DIR  where competition.json (teams + scoreboard) is stored (default ~/dojo_maps)
 """
@@ -29,6 +38,7 @@ import re
 import threading
 import time
 import urllib.request
+from collections import deque
 import uuid
 from contextlib import asynccontextmanager
 from pathlib import Path
@@ -48,7 +58,8 @@ from rclpy.executors import MultiThreadedExecutor
 from rclpy.node import Node
 from rclpy.qos import DurabilityPolicy, HistoryPolicy, QoSProfile, ReliabilityPolicy
 from screen_interfaces.srv import SetDisplayClass
-from std_srvs.srv import SetBool, Trigger                      # loading station uses std_srvs
+from std_msgs.msg import String                                # barrier status / events are String topics
+from std_srvs.srv import SetBool, Trigger                      # loading station + barrier use std_srvs
 
 try:
     from loading_station_interfaces.action import Dispense
@@ -320,6 +331,116 @@ async def dispenser_reset():
 
 
 # =========================================================================
+# 2b. BARRIER BRIDGE  (gamefield_barrier node <-> Arduino with the servo gate + HC-SR04)
+# =========================================================================
+BARRIER_BASE = '/gamefield/barrier'
+BARRIER_STALE_S = 3.0        # the barrier node publishes status at ~2 Hz; older than this = offline
+BARRIER_EVENTS_KEPT = 60
+
+
+class BarrierBridgeNode(Node):
+    def __init__(self):
+        super().__init__('barrier_web_bridge')
+        self._lock = threading.Lock()
+        self._status = None            # dict parsed from the last /status JSON
+        self._status_time = 0.0
+        self._events = deque(maxlen=BARRIER_EVENTS_KEPT)   # {'id', 'time', 'text'}
+        self._event_id = 0
+
+        self.open_cli = self.create_client(Trigger, f'{BARRIER_BASE}/open')
+        self.close_cli = self.create_client(Trigger, f'{BARRIER_BASE}/close')
+        self.reset_cli = self.create_client(Trigger, f'{BARRIER_BASE}/reset')
+        self.create_subscription(String, f'{BARRIER_BASE}/status', self._on_status, 10)
+        self.create_subscription(String, f'{BARRIER_BASE}/event', self._on_event, 10)
+        self.get_logger().info('BarrierBridgeNode initialized')
+
+    # ------------------------------------------------------------ topics
+    def _on_status(self, msg):
+        try:
+            data = json.loads(msg.data)
+        except ValueError:
+            return
+        if not isinstance(data, dict):
+            return
+        with self._lock:
+            self._status = data
+            self._status_time = time.monotonic()
+
+    def _on_event(self, msg):
+        with self._lock:
+            self._event_id += 1
+            self._events.append({'id': self._event_id, 'time': time.time(), 'text': msg.data})
+
+    def snapshot(self):
+        """What the page polls. `online` = the barrier node is publishing; status['connected'] = the
+        Arduino is plugged in and answering. Events carry an increasing id so the page logs each once."""
+        with self._lock:
+            online = (self._status is not None and
+                      time.monotonic() - self._status_time < BARRIER_STALE_S)
+            return {
+                'online': online,
+                'status': dict(self._status) if self._status else None,
+                'events': list(self._events),
+            }
+
+    # ---------------------------------------------------------- services
+    async def _call(self, client, timeout_sec=10.0):
+        # the barrier node holds the reply until the gate has arrived (up to its 6 s move timeout)
+        if not client.service_is_ready():
+            return False, 'Barrier service unavailable (is gamefield_barrier running?)'
+        future = client.call_async(Trigger.Request())
+        elapsed = 0.0
+        while not future.done() and elapsed < timeout_sec:
+            await asyncio.sleep(0.05)
+            elapsed += 0.05
+        if not future.done():
+            return False, 'Service request timed out'
+        try:
+            res = future.result()
+            return res.success, res.message
+        except Exception as e:
+            return False, f'Service execution failed: {e}'
+
+    async def call_open(self):
+        return await self._call(self.open_cli)
+
+    async def call_close(self):
+        return await self._call(self.close_cli)
+
+    async def call_reset(self):
+        return await self._call(self.reset_cli)
+
+
+barrier_router = APIRouter(prefix='/api/barrier', tags=['barrier'])
+barrier_node = None  # set by lifespan
+
+
+@barrier_router.get('/status')
+async def barrier_status():
+    if barrier_node is None:
+        return {'online': False, 'status': None, 'events': [], 'error': 'barrier bridge not started'}
+    return barrier_node.snapshot()
+
+
+@barrier_router.post('/open')
+async def barrier_open():
+    ok, msg = await barrier_node.call_open()
+    return {'success': ok, 'message': msg}
+
+
+@barrier_router.post('/close')
+async def barrier_close():
+    ok, msg = await barrier_node.call_close()
+    return {'success': ok, 'message': msg}
+
+
+@barrier_router.post('/reset')
+async def barrier_reset():
+    ok, msg = await barrier_node.call_reset()
+    return {'success': ok, 'message': msg}
+
+
+# =========================================================================
 # 3. HELPERS
 # =========================================================================
 def map_dir() -> Path:
@@ -469,17 +590,19 @@ async def comp_remove_run(rid: str):
 # =========================================================================
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    global ros_node, dispenser_node
+    global ros_node, dispenser_node, barrier_node
     if not rclpy.ok():
         rclpy.init()
     ros_node = WebBridgeNode()
     dispenser_node = make_dispenser_node()  # None if interfaces missing
+    barrier_node = BarrierBridgeNode()
 
-    # One executor spins both nodes (screen + dispenser) on a background thread
+    # One executor spins all the nodes (screen, dispenser, barrier) on a background thread
     executor = MultiThreadedExecutor(num_threads=4)
     executor.add_node(ros_node)
     if dispenser_node is not None:
         executor.add_node(dispenser_node)
+    executor.add_node(barrier_node)
     thread = threading.Thread(target=executor.spin, daemon=True)
     thread.start()
 
@@ -489,12 +612,14 @@ async def lifespan(app: FastAPI):
     ros_node.destroy_node()
     if dispenser_node is not None:
         dispenser_node.destroy_node()
+    barrier_node.destroy_node()
     if rclpy.ok():
         rclpy.shutdown()
 
 
 app = FastAPI(lifespan=lifespan)
 app.include_router(dispenser_router)
+app.include_router(barrier_router)
 app.include_router(comp_router)
 
 pkg_share = None

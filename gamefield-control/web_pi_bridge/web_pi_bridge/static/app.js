@@ -1,7 +1,7 @@
 // Robotics Dojo control page - all front-end logic in one file.
 // One continuous page (no hidden sections). Sections: helpers, run state, timer (full screen + keys),
 // competition (teams, navbar scoreboard for slam / nav2 / autonomy),
-// screen + detection, dispenser, obstacles, map requests (judges),
+// screen + detection, dispenser, obstacles, barrier (ultrasonic radar + gate), map requests (judges),
 // finish run, shell (sidebar / theme / pollers) - the shell must stay last.
 // Anything that comes from teams (names, labels) is inserted with textContent.
 
@@ -118,7 +118,7 @@ const elapsed = () => (run.running ? Date.now() - run.startedAt : run.elapsedMs)
     const fsEl = $('timer-fs');
     let fsOpen = false;
     const STAGE_NAME = { home: 'Setup', screen: 'Gamefield screen', loading: 'Loading station',
-                         obstacles: 'Dynamic obstacles', end: 'End run' };
+                         obstacles: 'Dynamic obstacles', barrier: 'Barrier', end: 'End run' };
 
     function tick() {
         const t = fmt(elapsed());
@@ -768,6 +768,209 @@ const elapsed = () => (run.running ? Date.now() - run.startedAt : run.elapsedMs)
 })();
 
 // ======================================================================
+// BARRIER - ultrasonic radar, gate state, open / close / reset - talks to /api/barrier/*
+// ======================================================================
+// /api/barrier/status mirrors the gamefield_barrier ROS node (see fastapi_node.py, BARRIER BRIDGE):
+//   { online, status: { connected, state, angle, pot, distance_cm, sequence, fault }, events: [{id, time, text}] }
+//   online       the barrier ROS node is publishing; status.connected = the Arduino is plugged in and answering
+//   state        UNKNOWN | INITIALIZING | OPENING | OPEN | CLOSING | CLOSED | FAULT
+//   distance_cm  HC-SR04 reading, -1 = no echo. The sensor is fixed (it does not scan), so the blip sits straight ahead
+//   sequence     'RUN' while the Arduino runs its own detect sequence (close / hold / open), else 'IDLE'
+//   events       'MANUAL:OPEN', 'SEQ:START (from CLOSED)', ... each with an increasing id
+// "Ultrasonic live" = the Arduino is connected and reporting; the radar only sweeps while that is true.
+(function () {
+    // ---- radar geometry (cm). The Arduino starts its sequence when an echo is within detectCm
+    //      (firmware config.h DEFAULT_DETECT_CM = 30, changed over serial with d<cm>): keep FIELD_RANGE_CM equal to
+    //      it so the zone drawn here is the real trigger. Raise MAX_RANGE_CM if you set a larger detect distance.
+    const MAX_RANGE_CM = 100;       // outer ring of the radar (the sensor itself reaches 200)
+    const FIELD_RANGE_CM = 30;      // an echo at or inside this distance = robot in the field
+    const RING_STEP_CM = 25;
+    const POLL_MS = 500;            // the node publishes status at about 2 Hz
+    const CX = 200, CY = 200, R = 180;      // radar centre + radius inside the svg viewBox
+
+    const radar = $('radar');
+    const NS = 'http://www.w3.org/2000/svg';
+    function svg(tag, attrs, text) {
+        const e = document.createElementNS(NS, tag);
+        Object.keys(attrs).forEach((k) => e.setAttribute(k, attrs[k]));
+        if (text !== undefined) e.textContent = text;
+        return e;
+    }
+    const px = (cm) => (Math.min(cm, MAX_RANGE_CM) / MAX_RANGE_CM) * R;
+    const arc = (r) => `M ${CX - r} ${CY} A ${r} ${r} 0 0 1 ${CX + r} ${CY}`;
+
+    // ---- static drawing: detection zone, range rings, bearing spokes (built from the constants above)
+    const rf = px(FIELD_RANGE_CM);
+    $('radar-field').setAttribute('d', `M ${CX} ${CY} L ${CX - rf} ${CY} A ${rf} ${rf} 0 0 1 ${CX + rf} ${CY} Z`);
+    $('radar-legend').textContent = `Detection zone: an echo within ${FIELD_RANGE_CM} cm counts as the robot in the field and starts the barrier sequence`;
+    const g = $('radar-grid');
+    for (let cm = RING_STEP_CM; cm <= MAX_RANGE_CM; cm += RING_STEP_CM) {
+        g.appendChild(svg('path', { d: arc(px(cm)) }));
+        g.appendChild(svg('text', { x: CX + px(cm), y: CY + 14 }, cm === RING_STEP_CM ? `${cm} cm` : String(cm)));
+    }
+    [-60, -30, 0, 30, 60].forEach((a) => {
+        const t = a * Math.PI / 180;
+        g.appendChild(svg('line', { x1: CX, y1: CY, x2: CX + R * Math.sin(t), y2: CY - R * Math.cos(t) }));
+    });
+    g.appendChild(svg('line', { class: 'base', x1: CX - R, y1: CY, x2: CX + R, y2: CY }));
+
+    // ---- state
+    let pending = false;        // an open / close / reset request is in flight
+    let last = { online: false, status: null, events: [] };
+    let prev = null;            // previous snapshot, to log changes
+    let lastEvent = 0;          // highest event id already logged
+    let wasInField = false;
+    let pose = 'extended';      // gate drawing: 'extended' (CLOSED) or 'retracted' (OPEN); kept while FAULT / UNKNOWN
+
+    // ---- log (same look as the station log)
+    function log(text, cls) {
+        const box = $('barrier-log');
+        const empty = box.querySelector('.empty');
+        if (empty) empty.remove();
+        const line = el('div', cls || '');
+        line.appendChild(el('span', 't', run.running ? fmt(elapsed()) : new Date().toLocaleTimeString()));
+        line.appendChild(document.createTextNode(text));
+        box.appendChild(line);
+        box.scrollTop = box.scrollHeight;
+    }
+    function clearLog() { $('barrier-log').replaceChildren(el('div', 'empty', 'Barrier events appear here.')); }
+    $('barrier-log-clear').addEventListener('click', clearLog);
+    clearLog();
+
+    function setStatus(text) { $('barrier-status').textContent = text; }
+
+    // ---- what the Arduino says right now, reduced to what the page needs
+    function reading(snap) {
+        const st = snap.online && snap.status ? snap.status : null;
+        const connected = !!(st && st.connected);
+        const d = connected && Number.isFinite(st.distance_cm) && st.distance_cm >= 0 ? st.distance_cm : null;
+        return {
+            st, connected,
+            state: connected ? String(st.state || 'UNKNOWN') : 'UNKNOWN',
+            distance: d,
+            inField: d !== null && d <= FIELD_RANGE_CM,
+            sequence: connected && st.sequence === 'RUN',
+            fault: connected && st.fault && st.fault !== 'NONE' ? st.fault : '',
+        };
+    }
+
+    function renderRadar(r) {
+        const live = r.connected;
+        const d = r.distance;
+        const seen = d !== null && d <= MAX_RANGE_CM;
+        const state = !live ? 'offline' : r.inField ? 'in-field' : seen ? 'object' : 'clear';
+
+        radar.dataset.live = String(live);
+        radar.dataset.state = state;
+        $('radar-read').dataset.state = state;
+        $('radar-live').hidden = !live;
+        $('us-badge').textContent = live ? 'LIVE' : 'OFFLINE';
+        $('us-badge').className = 'badge ' + (live ? 'badge-live' : 'badge-offline');
+        $('us-conn').textContent = live ? 'ultrasonic sensor live'
+            : r.st ? 'Arduino not connected' : (last.error || 'waiting for the barrier controller…');
+
+        const verdict = { offline: ['Ultrasonic offline', 'The radar starts when the sensor goes live.'],
+                          clear: ['Field clear', d !== null ? `Nearest echo ${d} cm, beyond the radar range.` : 'Sensor live, no echo.'],
+                          object: ['Object outside the zone', `Echo beyond ${FIELD_RANGE_CM} cm, not counted as the robot.`],
+                          'in-field': ['Robot in field', `Echo inside ${FIELD_RANGE_CM} cm of the sensor.`] }[state];
+        $('radar-verdict').textContent = verdict[0];
+        $('radar-sub').textContent = r.sequence && live ? 'Barrier sequence running…' : verdict[1];
+        $('radar-dist').textContent = live && d !== null ? `${d} cm` : '—';
+
+        const blip = $('radar-blip');
+        blip.toggleAttribute('hidden', !(live && seen));      // an svg <g> has no .hidden property, only the attribute
+        if (live && seen) blip.setAttribute('transform', `translate(${CX} ${(CY - px(d)).toFixed(1)})`);
+    }
+
+    function renderGate(r) {
+        const { st, connected, state } = r;
+        const label = !st ? 'OFFLINE' : !connected ? 'DISCONNECTED' : state;
+        $('gate-badge').textContent = label;
+        $('gate-badge').className = 'badge ' + (!st ? 'badge-offline' : !connected ? 'badge-disconnected' : 'badge-gate-' + state.toLowerCase());
+
+        if (state === 'OPEN' || state === 'OPENING') pose = 'retracted';
+        else if (state === 'CLOSED' || state === 'CLOSING' || state === 'INITIALIZING') pose = 'extended';
+        $('gate').dataset.pose = pose;
+        $('gate').dataset.known = String(connected && state !== 'UNKNOWN' && state !== 'FAULT');
+
+        // commands are refused by the Arduino while INITIALIZING or in FAULT (Reset clears a fault)
+        const ready = connected && !pending && !['UNKNOWN', 'INITIALIZING', 'FAULT'].includes(state);
+        $('barrier-open').disabled = !ready || state === 'OPEN' || state === 'OPENING';
+        $('barrier-close').disabled = !ready || state === 'CLOSED' || state === 'CLOSING';
+        $('barrier-reset').disabled = !connected || pending;
+
+        $('gate-angle').textContent = connected && st.angle >= 0 ? `${st.angle}°` : '—';
+        $('gate-pot').textContent = connected && st.pot >= 0 ? String(st.pot) : '—';
+        $('gate-fault').textContent = connected ? (r.fault || 'None') : '—';
+        $('gate-fault').parentElement.classList.toggle('bad', !!r.fault);
+        $('gate-hint').hidden = !r.fault;
+        if (r.fault) $('gate-hint').textContent = `Fault: ${r.fault}. Press Reset to clear it and re-initialise the barrier.`;
+    }
+
+    // ---- log what changed since the last poll
+    function diff(snap) {
+        const cur = reading(snap);
+        const evs = snap.events || [];
+        if (prev === null) {                      // first snapshot: sync, do not replay history
+            prev = cur;
+            lastEvent = evs.reduce((m, e) => Math.max(m, e.id), 0);
+            wasInField = cur.inField;
+            return;
+        }
+        if (cur.connected !== prev.connected) log(cur.connected ? 'Barrier controller connected' : 'Barrier controller disconnected', cur.connected ? 'ok' : 'err');
+        if (cur.connected && prev.connected && cur.state !== prev.state) log(`State ${prev.state} → ${cur.state}`, cur.state === 'FAULT' ? 'err' : '');
+        if (cur.connected && cur.fault && cur.fault !== prev.fault) log(`Fault: ${cur.fault}`, 'err');
+        if (cur.connected && cur.inField !== wasInField) {
+            log(cur.inField ? `Robot in field (${cur.distance} cm)` : 'Robot left the detection zone', cur.inField ? 'warn' : '');
+            wasInField = cur.inField;
+        }
+        evs.filter((e) => e.id > lastEvent).forEach((e) => {
+            log(e.text, /^SEQ:(ABORT|CANCEL)/.test(e.text) ? 'err' : /^MANUAL:/.test(e.text) ? 'warn' : '');
+            lastEvent = e.id;
+        });
+        prev = cur;
+    }
+
+    function render() {
+        const r = reading(last);
+        renderRadar(r);
+        renderGate(r);
+    }
+
+    async function poll() {
+        try { last = await api('/api/barrier/status'); }
+        catch (e) { last = { online: false, status: null, events: [], error: 'web bridge unreachable' }; }
+        diff(last);
+        render();
+    }
+
+    // open / close / reset: the node answers once the gate has arrived (a few seconds), so lock the buttons meanwhile
+    async function act(cmd, label) {
+        if (pending) return;
+        pending = true;
+        render();
+        setStatus(label);
+        try {
+            const data = await api('/api/barrier/' + cmd, {});
+            setStatus(data.message);
+            log(data.message, data.success ? 'ok' : 'err');
+        } catch (e) {
+            setStatus('Error connecting to web bridge');
+        }
+        pending = false;
+        poll();
+    }
+    $('barrier-open').addEventListener('click', () => act('open', 'Opening…'));
+    $('barrier-close').addEventListener('click', () => act('close', 'Closing…'));
+    $('barrier-reset').addEventListener('click', () => act('reset', 'Resetting (takes a few seconds)…'));
+
+    let timer = null;
+    window.barrierStart = () => { if (!timer) { poll(); timer = setInterval(poll, POLL_MS); } };
+    window.barrierStop = () => { clearInterval(timer); timer = null; };
+    render();       // drawn offline until the first poll answers
+})();
+
+// ======================================================================
 // FINISH RUN
 // ======================================================================
 (function () {
@@ -809,7 +1012,7 @@ const elapsed = () => (run.running ? Date.now() - run.startedAt : run.elapsedMs)
 // SHELL: sidebar jump links, scroll-spy, theme, pollers - must stay last
 // ======================================================================
 (function () {
-    const SECTIONS = ['home', 'screen', 'loading', 'obstacles', 'end'];
+    const SECTIONS = ['home', 'screen', 'loading', 'obstacles', 'barrier', 'end'];
     const sidebar = $('sidebar');
     const main = $('main');
     const mobile = () => window.matchMedia('(max-width: 720px)').matches;
@@ -841,6 +1044,7 @@ const elapsed = () => (run.running ? Date.now() - run.startedAt : run.elapsedMs)
         const live = run.running;
         if (vis.has('loading') || live) window.dispenserStart(); else window.dispenserStop();
         if (vis.has('screen')) window.screenStart(); else window.screenStop();
+        if (vis.has('barrier') || live) window.barrierStart(); else window.barrierStop();
     }
     onRun(updatePollers);
     window.refreshPollers = updatePollers;
