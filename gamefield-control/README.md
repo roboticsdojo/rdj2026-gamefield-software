@@ -59,7 +59,7 @@ colcon build --symlink-install
 
 ```bash
 cd gamefield-control
-source dojo_env.sh on            # Pi connected   (zenoh, ROS_DOMAIN_ID=62)
+source dojo_net.sh on            # Pi connected   (zenoh, ROS_DOMAIN_ID=62)
 ros2 run web_pi_bridge fastapi_node
 ```
 
@@ -80,4 +80,9 @@ curl http://localhost:8000/api/dispenser/status
 cd gamefield-control/web_pi_bridge/web_pi_bridge
 python3 mock_server.py      #open http://localhost:8000/
 
+```
+
+# Launch barrier
+```
+source install/setup.bash && ros2 launch gamefield_barrier barrier.launch.py
 ```

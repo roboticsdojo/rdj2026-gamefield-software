@@ -240,43 +240,42 @@
                 <section class="section" id="sec-barrier">
                     <div class="section-head">
                         <h1><span class="step">4</span>Barrier</h1>
-                        <div class="disp-state">
-                            <span id="us-badge" class="badge badge-offline">OFFLINE</span>
-                            <span id="us-conn" class="muted small">waiting for the barrier controller…</span>
-                        </div>
                     </div>
 
                     <div class="grid-2">
-                        <div class="card">
-                            <div class="card-head"><h2>Ultrasonic radar</h2></div>
-                            <div class="radar" id="radar" data-live="false" data-state="offline">
-                                <svg viewBox="0 0 400 222" role="img" aria-label="Ultrasonic radar: detection zone and detected robot">
-                                    <path id="radar-field" class="radar-field"/>
-                                    <g id="radar-grid" class="radar-grid"></g>
-                                    <g class="radar-sweep"><line class="glow" x1="200" y1="200" x2="200" y2="20"/><line class="beam" x1="200" y1="200" x2="200" y2="20"/></g>
-                                    <g id="radar-blip" class="radar-blip" hidden><circle class="pulse" r="9"/><circle class="dot" r="6"/></g>
-                                </svg>
-                                <span class="live-dot" id="radar-live" hidden>LIVE</span>
-                                <div class="radar-off" id="radar-off">Ultrasonic offline</div>
+                        <!-- AUTOMATIC: the Arduino's own sequence. Steps light up one after another as it runs. -->
+                        <div class="card auto-card">
+                            <div class="card-head">
+                                <h2>Automatic</h2>
+                                <span id="auto-badge" class="badge badge-offline">OFFLINE</span>
                             </div>
-                            <div class="radar-read" id="radar-read">
-                                <div>
-                                    <b id="radar-verdict">Ultrasonic offline</b>
-                                    <span class="muted small" id="radar-sub">The radar starts when the sensor goes live.</span>
+                            <p class="muted small card-note">Ultrasonic detects the robot, then the barrier closes and opens by itself.</p>
+                            <div class="auto-steps" id="auto-steps">
+                                <div class="auto-step" id="step-detect" data-status="off">
+                                    <span class="num">1</span><b>Ultrasonic detect</b><span class="sub">Sensor offline</span>
                                 </div>
-                                <span class="radar-dist" id="radar-dist">—</span>
+                                <span class="auto-arrow" aria-hidden="true">&rarr;</span>
+                                <div class="auto-step" id="step-a" data-status="pending">
+                                    <span class="num">2</span><b>Close</b><span class="sub"></span>
+                                </div>
+                                <span class="auto-arrow" aria-hidden="true">&rarr;</span>
+                                <div class="auto-step" id="step-b" data-status="pending">
+                                    <span class="num">3</span><b>Open</b><span class="sub"></span>
+                                </div>
                             </div>
-                            <p class="muted small radar-legend"><i class="sw"></i><span id="radar-legend">Detection zone</span></p>
+                            <div class="auto-banner" id="auto-banner" data-kind="offline">Waiting for the barrier controller…</div>
                         </div>
 
+                        <!-- MANUAL: fallback if the ultrasonic fails -->
                         <div class="card">
                             <div class="card-head">
-                                <h2>Barrier gate</h2>
+                                <h2>Manual</h2>
                                 <div class="row">
                                     <span id="gate-badge" class="badge badge-offline">OFFLINE</span>
                                     <button class="btn btn-ghost btn-sm" id="barrier-reset" type="button" title="Clear a fault and re-initialise the barrier" disabled>Reset</button>
                                 </div>
                             </div>
+                            <p class="muted small card-note">Fallback if the ultrasonic fails. A manual command cancels a running automatic sequence.</p>
                             <!-- Side view of the mechanism: servo + crank slider push the arm out of the housing (CLOSED)
                                  or pull it back in (OPEN). The two circles on the housing are the ultrasonic sensor. -->
                             <div class="gate" id="gate" data-pose="extended" data-known="false">

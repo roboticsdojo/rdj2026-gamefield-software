@@ -8,8 +8,8 @@
 It serves index.html, /static and /logos exactly like the real server and answers the /api calls with
 harmless fake data (teams and finished runs are kept in memory until you stop it).
 The loading station shows OFFLINE and the screen / robot feeds stay empty, as they would without hardware.
-The barrier is simulated (a robot drives past its ultrasonic sensor every 20 s; open / close / reset work),
-sending the same JSON as the real /api/barrier/status.
+The barrier is simulated: a robot drives past its ultrasonic sensor every 20 s and the detect sequence runs
+(close, hold, open), and manual open / close / reset work. Same JSON as the real /api/barrier/status.
 """
 import json
 import mimetypes
@@ -23,25 +23,79 @@ from urllib.parse import unquote, urlparse
 HERE = Path(__file__).resolve().parent
 COMP = {'teams': [], 'runs': [], 'current': None}
 
-# ---- fake barrier: same shape as the real /api/barrier/status
-BARRIER = {'state': 'CLOSED', 'target': 'CLOSED', 'until': 0.0}
+# ---- fake barrier: same shape as the real /api/barrier/status, and it runs the firmware's detect sequence
+#      from OPEN  : close -> hold -> open        from CLOSED: wait -> open -> hold -> close
+BARRIER = {'state': 'OPEN', 'target': 'OPEN', 'until': 0.0, 'seq': None, 'armed': True, 'events': [], 'eid': 0}
+MOCK_MOVE_S, MOCK_HOLD_S, MOCK_WAIT_S = 1.0, 3.0, 2.0
+
+
+def barrier_event(text):
+    BARRIER['eid'] += 1
+    BARRIER['events'].append({'id': BARRIER['eid'], 'time': time.time(), 'text': text})
+    del BARRIER['events'][:-60]
+
+
+def barrier_start_move(action):
+    BARRIER.update(state='OPENING' if action == 'OPEN' else 'CLOSING',
+                   target='OPEN' if action == 'OPEN' else 'CLOSED', until=time.time() + MOCK_MOVE_S)
+
+
+def barrier_cancel_seq():
+    if BARRIER['seq']:
+        BARRIER['seq'] = None
+        barrier_event('SEQ:CANCELLED')
+
+
+def barrier_tick(dist):
+    now = time.time()
+    b = BARRIER
+    if b['until'] and now >= b['until']:
+        b['state'], b['until'] = b['target'], 0.0
+    seq = b['seq']
+    detected = 0 <= dist <= 30
+    if not seq:
+        if not detected:
+            b['armed'] = True
+        elif b['armed'] and b['state'] in ('OPEN', 'CLOSED'):
+            origin = b['state']
+            steps = [('CLOSE', MOCK_HOLD_S), ('OPEN', 0)] if origin == 'OPEN' else [('OPEN', MOCK_HOLD_S), ('CLOSE', 0)]
+            b['seq'] = {'steps': steps, 'idx': -1, 'wait_until': now + (MOCK_WAIT_S if origin == 'CLOSED' else 0), 'hold_until': None}
+            b['armed'] = False
+            barrier_event(f'SEQ:START (from {origin})')
+        return
+    if seq['idx'] == -1:
+        if now >= seq['wait_until']:
+            seq['idx'] = 0
+            barrier_start_move(seq['steps'][0][0])
+        return
+    action, hold = seq['steps'][seq['idx']]
+    if b['state'] == ('OPEN' if action == 'OPEN' else 'CLOSED'):
+        if seq['hold_until'] is None:
+            seq['hold_until'] = now + hold
+        if now >= seq['hold_until']:
+            if seq['idx'] + 1 >= len(seq['steps']):
+                b['seq'] = None
+                barrier_event('SEQ:DONE')
+            else:
+                seq['idx'] += 1
+                seq['hold_until'] = None
+                barrier_start_move(seq['steps'][seq['idx']][0])
 
 
 def barrier_snapshot():
-    now = time.time()
-    if BARRIER['until'] and now >= BARRIER['until']:
-        BARRIER['state'], BARRIER['until'] = BARRIER['target'], 0.0
-    t = now % 20                       # a robot drives past the sensor: 90 cm -> 10 cm -> 90 cm, then nothing
+    t = time.time() % 20               # a robot drives past the sensor: 90 cm -> 10 cm -> 90 cm, then nothing
     dist = int(10 + abs(t - 4) * 20) if t < 8 else -1
+    barrier_tick(dist)
     angle = {'OPEN': 90, 'CLOSED': 0}.get(BARRIER['state'], 45)
-    return {'online': True, 'events': [],
+    return {'online': True, 'events': list(BARRIER['events']),
             'status': {'connected': True, 'state': BARRIER['state'], 'angle': angle, 'pot': 512,
-                       'distance_cm': dist, 'sequence': 'IDLE', 'fault': 'NONE'}}
+                       'distance_cm': dist, 'sequence': 'RUN' if BARRIER['seq'] else 'IDLE', 'fault': 'NONE'}}
 
 
 def barrier_move(target, moving):
-    BARRIER.update(state=moving, target=target, until=time.time() + 1.0)
-    time.sleep(1.0)                    # the real service answers once the gate has arrived
+    barrier_cancel_seq()
+    BARRIER.update(state=moving, target=target, until=time.time() + MOCK_MOVE_S)
+    time.sleep(MOCK_MOVE_S)            # the real service answers once the gate has arrived
     barrier_snapshot()
 
 
