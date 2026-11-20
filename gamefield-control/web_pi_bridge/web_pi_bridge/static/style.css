@@ -306,7 +306,6 @@ details.mini summary { cursor: pointer; font-size: 0.85rem; font-weight: 600; co
     display: grid; place-items: center;
 }
 .media img { width: 100%; height: 100%; object-fit: contain; display: block; }
-#sec-screen .media { aspect-ratio: 1024 / 600; max-height: 72vh; width: min(100%, calc(72vh * 1024 / 600)); margin: 0 auto; }
 .media-empty { position: absolute; inset: 0; display: grid; place-items: center; text-align: center; padding: 20px; color: #9cb2bc; font-size: 0.9rem; line-height: 1.5; }
 .media-empty code { background: rgba(255, 255, 255, 0.1); color: #ffecd1; }
 .media .det-label {
@@ -642,4 +641,77 @@ kbd {
 @media (prefers-reduced-motion: reduce) {
     .auto-step { animation: none !important; }
     .gate-arm { transition: none; }
+}
+
+/* ===================================================================== fit to the window
+   Every section is exactly one window tall (the area under the top bar) and its content shares that height,
+   so the stream, the logs, the obstacle grid and the barrier drawing grow or shrink with the window instead of
+   needing a zoomed-out browser. Text scales with the window too. If a window is really too small for a section,
+   that one section scrolls inside itself, so nothing is ever cut off. */
+html { font-size: clamp(12px, calc(0.9vmin + 6px), 17px); }
+body { font-size: 1rem; }
+
+.main { container-type: size; padding: 0; scroll-padding-top: 0; scroll-snap-type: y proximity; }
+.section {
+    height: calc(100vh - 110px);            /* fallback for browsers without container units */
+    height: 100cqh;
+    max-width: 1700px;
+    margin: 0 auto;
+    padding: 2cqh 2.5cqw;
+    gap: 1.6cqh;
+    overflow-x: hidden; overflow-y: auto;
+    scroll-snap-align: start;
+}
+.section + .section { margin: 0 auto; border-top: 1px solid var(--line); }
+.section > * { flex: none; min-height: 0; }
+#sec-end { min-height: 0; }
+.card { padding: clamp(10px, 1.8cqh, 18px) clamp(12px, 1.6cqw, 20px); }
+h2 { margin-bottom: 1cqh; }
+.row { margin-top: 1cqh; }
+.hero-icon { width: clamp(44px, 9cqh, 84px); height: clamp(44px, 9cqh, 84px); }
+.step { width: 1.9rem; height: 1.9rem; }
+.table-wrap { max-height: 30cqh; overflow: auto; }
+
+/* 1. screen: the stream takes all the room the buttons leave */
+#sec-screen > div:not(.section-head) { flex: 1 1 0; display: flex; flex-direction: column; }
+#sec-screen .card { flex: 1 1 0; display: flex; flex-direction: column; min-height: 0; }
+#sec-screen .card > * { flex: none; }
+#sec-screen .card > .media {
+    flex: 1 1 0; min-height: 140px;
+    aspect-ratio: auto; max-height: none; width: 100%;
+    background: transparent;
+    display: flex; align-items: center; justify-content: center;
+}
+#sec-screen .card > .media img { width: auto; height: auto; max-width: 100%; max-height: 100%; object-fit: contain; border-radius: 10px; background: #000c14; }
+#sec-screen .class-buttons { margin-top: 1cqh; }
+
+/* 2. loading station: the log takes what the stations leave */
+#sec-loading > .card:last-child { flex: 1 1 0; min-height: 110px; display: flex; flex-direction: column; }
+#sec-loading > .card:last-child .log { flex: 1 1 0; height: auto; min-height: 40px; }
+
+/* 3. obstacles: the grid is as big as fits */
+#sec-obstacles > .card { flex: 1 1 0; min-height: 200px; display: flex; flex-direction: column; }
+#sec-obstacles .obs-grid-wrap { flex: 1 1 0; min-height: 0; }
+#sec-obstacles .obs-grid { width: auto; max-width: 100%; height: 100%; aspect-ratio: 1.1; }
+#sec-obstacles .obs-cell { min-height: 0; }
+
+/* 4. barrier: the two cards share the height with the log below */
+#sec-barrier > .grid-2 { flex: 2.4 1 0; min-height: 280px; grid-template-rows: minmax(0, 1fr); }
+#sec-barrier > .grid-2 > .card { display: flex; flex-direction: column; min-height: 0; }
+#sec-barrier > .grid-2 > .card > * { flex: none; }
+#sec-barrier > .grid-2 > .card .auto-steps { flex: 1 1 0; }
+#sec-barrier > .grid-2 > .card > .gate { flex: 1 1 0; min-height: 70px; display: flex; }
+#sec-barrier .gate svg { flex: 1 1 0; width: 100%; max-width: none; height: 100%; min-height: 0; }
+#sec-barrier > .card:last-child { flex: 0.6 1 0; min-height: 100px; display: flex; flex-direction: column; }
+#sec-barrier > .card:last-child .log-short { flex: 1 1 0; height: auto; min-height: 40px; }
+
+@media (max-width: 1000px) { #sec-barrier > .grid-2 { flex: none; } }
+@media (max-width: 720px) {
+    .section { height: auto; overflow: visible; padding: 16px; }
+    #sec-screen > div:not(.section-head), #sec-screen .card { flex: none; }
+    #sec-screen .card > .media { aspect-ratio: 1024 / 600; flex: none; }
+    #sec-loading > .card:last-child, #sec-obstacles > .card, #sec-barrier > .card:last-child { flex: none; }
+    #sec-loading .log, #sec-barrier .log-short { height: 180px; flex: none; }
+    #sec-obstacles .obs-grid-wrap { flex: none; }
+    #sec-obstacles .obs-grid { width: 100%; height: auto; }
 }
