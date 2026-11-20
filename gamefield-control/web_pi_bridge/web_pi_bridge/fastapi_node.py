@@ -718,6 +718,15 @@ class ScreenFeed:
         self.seq = 0
         self.viewers = 0
         self.thread = None
+        self._small_lock = threading.Lock()   # shrink each frame once, not once per viewer
+        self._small = None
+        self._small_seq = -1
+
+    def small_for(self, frame, seq):
+        with self._small_lock:
+            if self._small_seq != seq:
+                self._small, self._small_seq = shrink_frame(frame), seq
+            return self._small
 
     def acquire(self):
         with self.cond:
@@ -790,7 +799,9 @@ def screen_stream():
                     if screen_feed.seq == last:      # nothing from the Pi for 15 s
                         break
                     frame, last = screen_feed.frame, screen_feed.seq
-                frame = shrink_frame(frame)
+                if frame is None:                    # first viewer after an idle spell: nothing captured yet
+                    continue
+                frame = screen_feed.small_for(frame, last)
                 yield (b'--frame\r\nContent-Type: image/jpeg\r\nContent-Length: %d\r\n\r\n'
                        % len(frame)) + frame + b'\r\n'
                 last_sent = time.monotonic()

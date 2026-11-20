@@ -507,7 +507,7 @@ const elapsed = () => (run.running ? Date.now() - run.startedAt : run.elapsedMs)
             next.dataset.fallback = FEED_DIRECT;
             old.replaceWith(next);
             old.onload = old.onerror = null;
-            old.removeAttribute('src');                 // drops the old connection
+            old.src = '';                               // drops the old connection (removing the attribute can leave it open)
             feed = next;
             feed.addEventListener('error', onFeedError);
         };
@@ -521,7 +521,7 @@ const elapsed = () => (run.running ? Date.now() - run.startedAt : run.elapsedMs)
         // reuse the stuck one. The relay is ours and ignores the query, so give each connection its own URL.
         // The Pi's own stream is left untouched: drop the old connection first, then open a new one.
         if (feedUrl === FEED_RELAY) next.src = FEED_RELAY + '?t=' + Date.now();
-        else { feed.removeAttribute('src'); setTimeout(() => { if (gen === feedGen) next.src = FEED_DIRECT; }, 50); }
+        else { feed.src = ''; setTimeout(() => { if (gen === feedGen) next.src = FEED_DIRECT; }, 50); }
     }
     function onFeedError() {
         feedFails += 1;
