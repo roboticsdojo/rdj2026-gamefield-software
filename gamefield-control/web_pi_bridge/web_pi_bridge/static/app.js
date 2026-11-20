@@ -102,7 +102,7 @@ function toast(title, msg, actionLabel, action, ms, tag) {
 function newRun(team, category) {
     return { team: team || '', category: category || 'slam', running: false, startedAt: 0, elapsedMs: 0, epochStart: 0,
              displayed: '',
-             correct: null, loadedMs: null, stoppedMs: null, notes: '' };
+             loadedMs: null, stoppedMs: null, notes: '' };
 }
 let run = Object.assign(newRun(), store.get('dojoRun', {}));
 const runListeners = [];
@@ -368,7 +368,7 @@ const elapsed = () => (run.running ? Date.now() - run.startedAt : run.elapsedMs)
         [...comp.runs].reverse().forEach((r) => {
             const tr = el('tr');
             const det = !r.displayed ? '—' : classLabel(normClass(r.displayed)) +
-                (r.correct === true ? ' ✓' : r.correct === false ? ' ✗' : r.detected ? ` → ${classLabel(normClass(r.detected))}` : '');
+                (r.detected ? ` → ${classLabel(normClass(r.detected))}` : '');       // old runs only
             const del = el('button', 'del');
             del.title = 'Delete this run';
             del.appendChild(icon('x'));
@@ -477,9 +477,60 @@ const elapsed = () => (run.running ? Date.now() - run.startedAt : run.elapsedMs)
 // ======================================================================
 (function () {
     let screenShown = 'logo';
-    let visible = false;
 
     function setStatus(t) { $('status').textContent = t; }
+
+    // ---- live feed of the Pi screen.
+    // The feed stays connected the whole time (no black flash when you scroll back). It comes through this
+    // server's relay (/api/screen_stream: newest frame only, so it cannot fall behind) and falls back to the
+    // Pi's own stream if the relay keeps failing. A fresh connection is opened (and swapped in once its first
+    // frame is there) after every screen change and whenever the feed drops, so it never needs a page refresh.
+    let feed = $('live-stream');
+    const FEED_RELAY = feed.dataset.src;
+    const FEED_DIRECT = feed.dataset.fallback;
+    let feedUrl = FEED_RELAY, feedFails = 0, feedGen = 0, feedTimer = null;
+
+    function reconnectFeed() {
+        const gen = ++feedGen;
+        clearTimeout(feedTimer);
+        const next = new Image();
+        next.alt = feed.alt;
+        let swapped = false;
+        const swap = () => {
+            if (swapped || gen !== feedGen) return;
+            swapped = true;
+            feedFails = 0;
+            const old = feed;
+            next.onload = next.onerror = null;
+            next.id = 'live-stream';
+            next.dataset.src = FEED_RELAY;
+            next.dataset.fallback = FEED_DIRECT;
+            old.replaceWith(next);
+            old.onload = old.onerror = null;
+            old.removeAttribute('src');                 // drops the old connection
+            feed = next;
+            feed.addEventListener('error', onFeedError);
+        };
+        next.onload = swap;                             // first frame is in
+        next.onerror = () => {
+            if (swapped || gen !== feedGen) return;
+            onFeedError();
+        };
+        setTimeout(swap, 5000);                         // some browsers never fire load for a live stream
+        // The browser shares one image connection per URL, so asking for the same URL again would just
+        // reuse the stuck one. The relay is ours and ignores the query, so give each connection its own URL.
+        // The Pi's own stream is left untouched: drop the old connection first, then open a new one.
+        if (feedUrl === FEED_RELAY) next.src = FEED_RELAY + '?t=' + Date.now();
+        else { feed.removeAttribute('src'); setTimeout(() => { if (gen === feedGen) next.src = FEED_DIRECT; }, 50); }
+    }
+    function onFeedError() {
+        feedFails += 1;
+        if (feedFails >= 3) { feedUrl = feedUrl === FEED_RELAY ? FEED_DIRECT : FEED_RELAY; feedFails = 0; }   // relay down: try the Pi directly, and back
+        clearTimeout(feedTimer);
+        feedTimer = setTimeout(reconnectFeed, 2000);
+    }
+    window.reconnectScreenFeed = reconnectFeed;
+    reconnectFeed();
 
     async function sendClass(cls) {
         setStatus(`Requesting '${classLabel(cls)}' image…`);
@@ -494,8 +545,8 @@ const elapsed = () => (run.running ? Date.now() - run.startedAt : run.elapsedMs)
             if (data.success) {
                 screenShown = cls;
                 run.displayed = cls;
-                run.correct = null;                 // a new item is up: judge it again
                 saveRun();
+                setTimeout(reconnectFeed, 600);         // let the Pi redraw, then show the new picture here
             }
         } catch (e) { setStatus('Error connecting to web bridge'); }
     }
@@ -512,22 +563,9 @@ const elapsed = () => (run.running ? Date.now() - run.startedAt : run.elapsedMs)
         try {
             const data = await api('/api/set_display', { state: false });
             setStatus(data.message);
-            if (data.success) { screenShown = 'logo'; render(); }
+            if (data.success) { screenShown = 'logo'; render(); setTimeout(reconnectFeed, 600); }
         } catch (e) { setStatus('Error connecting to web bridge'); }
     });
-
-    function setCorrect(value) {
-        run.correct = value;
-        saveRun();
-    }
-    $('v-correct').addEventListener('click', () => setCorrect(run.correct !== true));
-
-    function renderScreenFeed() {
-        // only load the gamefield screen's MJPEG feed while the section is on screen, it eats bandwidth
-        const screen = $('live-stream');
-        if (visible) { if (!screen.getAttribute('src')) screen.src = screen.dataset.src; }
-        else screen.removeAttribute('src');
-    }
 
     function render() {
         $('screen-shown').textContent = 'Screen: ' + (screenShown === 'logo' ? 'logo' : classLabel(screenShown));
@@ -535,15 +573,8 @@ const elapsed = () => (run.running ? Date.now() - run.startedAt : run.elapsedMs)
             b.classList.toggle('active', normClass(b.dataset.cat) === screenShown);
         });
         $('v-displayed').textContent = classLabel(run.displayed);
-        const c = $('v-correct');
-        c.setAttribute('aria-pressed', String(run.correct === true));
-        c.classList.toggle('wrong', run.correct === false);
-        c.querySelector('span').textContent = run.correct === false ? 'Incorrectly identified' : 'Correctly identified';
     }
     onRun(render);
-
-    window.screenStart = () => { visible = true; renderScreenFeed(); };
-    window.screenStop = () => { visible = false; renderScreenFeed(); };
 })();
 
 // ======================================================================
@@ -1018,7 +1049,7 @@ const elapsed = () => (run.running ? Date.now() - run.startedAt : run.elapsedMs)
         try {
             const r = await api('/api/competition/runs', {
                 team: run.team, category: run.category, elapsed_ms: Math.round(run.elapsedMs), total: 0, scores: {},
-                displayed: run.displayed, correct: run.correct, notes: run.notes,
+                displayed: run.displayed, notes: run.notes,
             });
             if (!r.success) throw new Error(r.message);
             const saved = { team: run.team, cat: catLabel(run.category), time: fmt(run.elapsedMs) };
@@ -1073,7 +1104,6 @@ const elapsed = () => (run.running ? Date.now() - run.startedAt : run.elapsedMs)
     function updatePollers() {
         const live = run.running;
         if (vis.has('loading') || live) window.dispenserStart(); else window.dispenserStop();
-        if (vis.has('screen')) window.screenStart(); else window.screenStop();
         if (vis.has('barrier') || live) window.barrierStart(); else window.barrierStop();
     }
     onRun(updatePollers);

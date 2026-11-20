@@ -156,7 +156,7 @@
                         <div class="card">
                             <h2>Screen stream</h2>
                             <div class="media">
-                                <img id="live-stream" data-src="http://screen.local:8080/stream" alt="Gamefield screen feed">
+                                <img id="live-stream" data-src="/api/screen_stream" data-fallback="http://screen.local:8080/stream" alt="Gamefield screen feed">
                             </div>
                             <div class="class-buttons" id="class-buttons">
                                 <button class="class-btn cls-organic" data-cat="organic">Organic</button>
@@ -171,12 +171,9 @@
                         </div>
 
                         <div class="card verdict-card verdict-side">
-                            <h2>Detection</h2>
+                            <h2>Shown on screen</h2>
                             <div class="verdict">
-                                <div class="verdict-cell"><span class="muted small">Displayed</span><b id="v-displayed">—</b></div>
-                                <button class="check-toggle" id="v-correct" aria-pressed="false">
-                                    <svg class="ic"><use href="#i-check"/></svg><span>Correctly identified</span>
-                                </button>
+                                <div class="verdict-cell"><b id="v-displayed">—</b></div>
                             </div>
                         </div>
                     </div>
