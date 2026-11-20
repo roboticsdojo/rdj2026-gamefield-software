@@ -306,6 +306,7 @@ details.mini summary { cursor: pointer; font-size: 0.85rem; font-weight: 600; co
     display: grid; place-items: center;
 }
 .media img { width: 100%; height: 100%; object-fit: contain; display: block; }
+#sec-screen .media { aspect-ratio: 1024 / 600; max-height: 72vh; width: min(100%, calc(72vh * 1024 / 600)); margin: 0 auto; }
 .media-empty { position: absolute; inset: 0; display: grid; place-items: center; text-align: center; padding: 20px; color: #9cb2bc; font-size: 0.9rem; line-height: 1.5; }
 .media-empty code { background: rgba(255, 255, 255, 0.1); color: #ffecd1; }
 .media .det-label {

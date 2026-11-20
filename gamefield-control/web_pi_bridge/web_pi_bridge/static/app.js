@@ -572,7 +572,6 @@ const elapsed = () => (run.running ? Date.now() - run.startedAt : run.elapsedMs)
         $('class-buttons').querySelectorAll('.class-btn').forEach((b) => {
             b.classList.toggle('active', normClass(b.dataset.cat) === screenShown);
         });
-        $('v-displayed').textContent = classLabel(run.displayed);
     }
     onRun(render);
 })();
@@ -1035,12 +1034,6 @@ const elapsed = () => (run.running ? Date.now() - run.startedAt : run.elapsedMs)
 // FINISH RUN
 // ======================================================================
 (function () {
-    onRun(() => {
-        if (document.activeElement !== $('run-notes')) $('run-notes').value = run.notes || '';
-    });
-
-    $('run-notes').addEventListener('input', () => { run.notes = $('run-notes').value; store.set('dojoRun', run); });
-
     window.endRun = async () => {
         if (!run.team) return;
         if (!run.running && run.elapsedMs <= 0) return;      // nothing timed yet

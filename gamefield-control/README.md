@@ -59,14 +59,16 @@ colcon build --symlink-install
 
 ```bash
 cd gamefield-control
-source dojo_net.sh on            # Pi connected   (zenoh, ROS_DOMAIN_ID=62)
+source dojo_net.sh            # Pi connected   (zenoh, ROS_DOMAIN_ID=62)
 ros2 run web_pi_bridge fastapi_node
 ```
 
 Open `http://localhost:8000` on that laptop, or `http://<laptop-ip>:8000` from another PC
 (find the IP with `hostname -I`). The server listens on all interfaces.
 
-
+#restart services
+sudo systemctl restart screen_manager.service screen_stream.service
+journalctl -u screen_manager.service --since "1 min ago" --no-pager | grep Discovered
 
 
 Quick check from the laptop to confirm networking:
