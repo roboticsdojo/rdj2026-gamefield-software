@@ -18,7 +18,9 @@
 #   ./dojo_net.sh check   test the link from either machine
 #
 # Works offline: the Pi is found by hostname via mDNS, so no address is ever stored.
-# Sourcing clears any stale PI_IP / ZENOH_CONFIG_OVERRIDE / DOJO_SCREEN_STREAM
+# Tailscale (100.64.0.0/10) addresses are always ignored. To pin a static address instead
+# of using mDNS:   export DOJO_PI_IP=192.168.1.50   (or: source dojo_net.sh on 192.168.1.50)
+# Sourcing clears any stale PI_IP / ZENOH_CONFIG_OVERRIDE / ZENOH_SESSION_CONFIG_URI / DOJO_SCREEN_STREAM
 # (e.g. left over from ~/.bashrc) before setting anything.
 #
 # Options (run mode; `--host` also works as `source dojo_net.sh on --host NAME`)
@@ -65,7 +67,7 @@ if (return 0 2>/dev/null); then
     fi
 
     # always start clean: never inherit an address from an old shell setup
-    unset PI_IP ZENOH_CONFIG_OVERRIDE DOJO_SCREEN_STREAM
+    unset PI_IP ZENOH_CONFIG_OVERRIDE ZENOH_SESSION_CONFIG_URI DOJO_SCREEN_STREAM
 
     if [ "$_dn_mode" = off ]; then
       unset RMW_IMPLEMENTATION
@@ -84,7 +86,10 @@ if (return 0 2>/dev/null); then
         _dn_host_args=(--host "$2")
       fi
 
-      if [ -n "$_dn_ip" ]; then
+      if [ -n "$_dn_ip" ] && [[ "$_dn_ip" =~ ^100\.(6[4-9]|[7-9][0-9]|1[01][0-9]|12[0-7])\. ]]; then
+        echo "ERROR: $_dn_ip is a Tailscale address (100.64.0.0/10). Give the Pi's LAN/static IP instead." >&2
+        _dn_ip=""; _dn_rc=1
+      elif [ -n "$_dn_ip" ]; then
         export PI_IP="$_dn_ip"
         export ZENOH_CONFIG_OVERRIDE="connect/endpoints=[\"tcp/${PI_IP}:7447\"]"
         export DOJO_SCREEN_STREAM="http://${PI_IP}:8080/stream"
@@ -182,25 +187,38 @@ is_ipv4() { [[ "${1:-}" =~ ^([0-9]{1,3}\.){3}[0-9]{1,3}$ ]]; }
 # find_pi: resolve the Pi by hostname. Tries every method available, prints the
 # IPv4 address on stdout. Nothing is cached or saved.
 # -----------------------------------------------------------------------------
+# Tailscale hands out addresses from 100.64.0.0/10 (CGNAT). This script is for the
+# local/offline network only, so those addresses are never accepted.
+is_tailscale_ip() { [[ "${1:-}" =~ ^100\.(6[4-9]|[7-9][0-9]|1[01][0-9]|12[0-7])\. ]]; }
+is_lan_ipv4()     { is_ipv4 "${1:-}" && ! is_tailscale_ip "$1"; }
+
 find_pi() {
-  local names=("$HOST") ip="" n
-  [[ "$HOST" == *.local ]] && names+=("${HOST%.local}")      # plain name also works on routers that register hosts
-  for n in "${names[@]}"; do
-    ip="$(getent ahostsv4 "$n" 2>/dev/null | awk 'NR==1{print $1}' || true)"
-    is_ipv4 "$ip" && { echo "$ip"; return 0; }
-    if command -v avahi-resolve-host-name >/dev/null 2>&1; then
-      ip="$(avahi-resolve-host-name -4 "$n" 2>/dev/null | awk '{print $2}' || true)"
-      is_ipv4 "$ip" && { echo "$ip"; return 0; }
-    fi
-    if command -v ping >/dev/null 2>&1; then
-      ip="$(ping -4 -c1 -W2 "$n" 2>/dev/null | sed -n 's/^PING [^(]*(\([0-9.]*\)).*/\1/p' | head -n1 || true)"
-      is_ipv4 "$ip" && { echo "$ip"; return 0; }
-    fi
-    if is_wsl && command -v powershell.exe >/dev/null 2>&1; then   # Windows resolves .local natively
-      ip="$(powershell.exe -NoProfile -Command "[System.Net.Dns]::GetHostAddresses('$n') | Where-Object { \$_.AddressFamily -eq 'InterNetwork' } | ForEach-Object { \$_.IPAddressToString }" 2>/dev/null | tr -d '\r' | head -n1 || true)"
-      is_ipv4 "$ip" && { echo "$ip"; return 0; }
-    fi
+  # A pinned static address wins:  export DOJO_PI_IP=192.168.1.50
+  if [ -n "${DOJO_PI_IP:-}" ]; then
+    if is_lan_ipv4 "$DOJO_PI_IP"; then echo "$DOJO_PI_IP"; return 0; fi
+    warn "DOJO_PI_IP='$DOJO_PI_IP' is not a usable LAN IPv4 address (Tailscale 100.x is ignored)"
+  fi
+
+  # Only the .local (mDNS) name is tried. A bare name like "screen" would be answered
+  # by Tailscale MagicDNS with the 100.x address, so there is no bare-name fallback.
+  local n="$HOST" ip=""
+  # every address the system resolver returns, first non-Tailscale one wins
+  for ip in $(getent ahostsv4 "$n" 2>/dev/null | awk '{print $1}' | awk '!seen[$0]++' || true); do
+    is_lan_ipv4 "$ip" && { echo "$ip"; return 0; }
   done
+  if command -v avahi-resolve-host-name >/dev/null 2>&1; then
+    ip="$(avahi-resolve-host-name -4 "$n" 2>/dev/null | awk '{print $2}' || true)"
+    is_lan_ipv4 "$ip" && { echo "$ip"; return 0; }
+  fi
+  if command -v ping >/dev/null 2>&1; then
+    ip="$(ping -4 -c1 -W2 "$n" 2>/dev/null | sed -n 's/^PING [^(]*(\([0-9.]*\)).*/\1/p' | head -n1 || true)"
+    is_lan_ipv4 "$ip" && { echo "$ip"; return 0; }
+  fi
+  if is_wsl && command -v powershell.exe >/dev/null 2>&1; then   # Windows resolves .local natively
+    for ip in $(powershell.exe -NoProfile -Command "[System.Net.Dns]::GetHostAddresses('$n') | Where-Object { \$_.AddressFamily -eq 'InterNetwork' } | ForEach-Object { \$_.IPAddressToString }" 2>/dev/null | tr -d '\r' || true); do
+      is_lan_ipv4 "$ip" && { echo "$ip"; return 0; }
+    done
+  fi
   return 1
 }
 
@@ -388,6 +406,7 @@ role_check() {
       log "ROS graph through Zenoh (10 s)"
       local out
       out="$(bash -c "source '$ROS_SETUP'
+                      unset ZENOH_SESSION_CONFIG_URI
                       export RMW_IMPLEMENTATION=rmw_zenoh_cpp ROS_DOMAIN_ID=$DOMAIN_ID
                       export ZENOH_CONFIG_OVERRIDE='connect/endpoints=[\"tcp/$ip:$ZENOH_PORT\"]'
                       timeout 10 ros2 service list --no-daemon 2>/dev/null" || true)"

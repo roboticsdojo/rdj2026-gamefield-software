@@ -51,8 +51,8 @@ function fmt(ms) {
 // Screen categories are folder names on the Pi (screen_images/test_images/<name>).
 // Metal tries 'metal' first and falls back to the old folder name 'other', so the page works
 // both before and after the Pi's folder is renamed.
-const CLASS_LABEL = { organic: 'Organic', metal: 'Metal', plastic: 'Plastic' };
-const SCREEN_CATEGORY = { organic: ['organic'], metal: ['metal', 'other'], plastic: ['plastic'] };
+const CLASS_LABEL = { metal: 'Metal', organic: 'Organic', plastic: 'Plastic' };
+const SCREEN_CATEGORY = { metal: ['metal', 'other'], organic: ['organic'], plastic: ['plastic'] };
 function normClass(s) {
     s = (s || '').toLowerCase();
     if (s === 'other' || s === 'metal') return 'metal';
@@ -647,14 +647,14 @@ const elapsed = () => (run.running ? Date.now() - run.startedAt : run.elapsedMs)
 (function () {
     let enabled = true;
     let prev = null;             // previous snapshot, to log changes
-    let stationClass = store.get('dojoStationMap', { 1: 'metal', 2: 'plastic', 3: 'organic' });
+    let stationClass = store.get('dojoStationMap', { 1: 'metal', 2: 'organic', 3: 'plastic' });
 
     // ---- build the 3 station cards once
     document.querySelectorAll('.station').forEach((card) => {
         const n = card.dataset.station;
         card.innerHTML = `
             <h3><span>STATION ${n}</span><span class="st-class"><select aria-label="Waste class of station ${n}">
-                <option value="organic">Organic</option><option value="metal">Metal</option><option value="plastic">Plastic</option>
+                <option value="metal">Metal</option><option value="organic">Organic</option><option value="plastic">Plastic</option>
             </select></span></h3>
             <div class="station-actions">
                 <button class="btn btn-primary">Dispense</button>
