@@ -168,7 +168,7 @@ class Handler(BaseHTTPRequestHandler):
         if path == '/api/competition/runs':
             cat = (b.get('category') or '').lower()
             run = b | {'id': uuid.uuid4().hex[:8], 'time': time.time(),
-                       'category': cat if cat in ('slam', 'nav2', 'autonomy') else 'autonomy'}
+                       'category': cat if cat in ('nav2', 'autonomy') else 'autonomy'}
             COMP['runs'].append(run)
             COMP['current'] = None
             secs = run.get('elapsed_ms', 0) / 1000

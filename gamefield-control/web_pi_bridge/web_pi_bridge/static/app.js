@@ -1,6 +1,6 @@
 // Robotics Dojo control page - all front-end logic in one file.
 // One continuous page (no hidden sections). Sections: helpers, run state, timer (full screen + keys),
-// competition (teams, navbar scoreboard for slam / nav2 / autonomy),
+// competition (teams, navbar scoreboard for nav2 / behaviour trees),
 // screen + detection, dispenser, obstacles, barrier (automatic sequence + manual gate), map requests (judges),
 // finish run, shell (sidebar / theme / pollers) - the shell must stay last.
 // Anything that comes from teams (names, labels) is inserted with textContent.
@@ -61,10 +61,58 @@ function normClass(s) {
 const classLabel = (c) => CLASS_LABEL[c] || '—';
 
 // Challenges that get a time on the scoreboard. Runs saved before this existed have no category = autonomy.
-const CATS = [['slam', 'SLAM'], ['nav2', 'Nav2'], ['autonomy', 'Behaviour Trees']];
-const catLabel = (c) => (CATS.find((x) => x[0] === c) || CATS[2])[1];
-const NEXT_CHALLENGE = { slam: 'nav2', nav2: 'autonomy' };       // order each team plays them in; Behaviour Trees is last
-const catOf = (r) => (r && (r.category === 'slam' || r.category === 'nav2') ? r.category : 'autonomy');
+// (SLAM was removed as a challenge: runs already saved as 'slam' stay in the data file but are not shown.)
+const CATS = [['nav2', 'Nav2'], ['autonomy', 'Behaviour Trees']];
+const catLabel = (c) => (CATS.find((x) => x[0] === c) || CATS[1])[1];
+const NEXT_CHALLENGE = { nav2: 'autonomy' };       // order each team plays them in; Behaviour Trees is last
+const catOf = (r) => (r && r.category === 'nav2' ? 'nav2' : 'autonomy');
+const isShown = (r) => !!r && r.category !== 'slam';
+
+// Fit a box of a fixed shape (width / height = ratio) into the biggest size its stage allows, and keep it that
+// size as the window changes. The stage is position:relative and the box is position:absolute (see .stage / .fit),
+// so the box never changes the size of the stage it is measured against.
+function fitBox(stage, box, ratio) {
+    const fit = () => {
+        const w = stage.clientWidth, h = stage.clientHeight;
+        if (!w || !h) return;
+        let bw = w, bh = w / ratio;
+        if (bh > h) { bh = h; bw = h * ratio; }
+        box.style.width = Math.floor(bw) + 'px';
+        box.style.height = Math.floor(bh) + 'px';
+    };
+    if (window.ResizeObserver) new ResizeObserver(fit).observe(stage);
+    window.addEventListener('resize', fit);
+    fit();
+}
+
+// A collapsible log (<details class="logbox">): remembers whether it was left open, and keeps the count and the
+// newest line visible in the bar so a closed log still says what is going on.
+function logBox(detailsId, boxId, countId, lastId, clearId, emptyText) {
+    const det = $(detailsId), box = $(boxId);
+    det.open = store.get('dojoLogOpen_' + detailsId, false);
+    det.addEventListener('toggle', () => store.set('dojoLogOpen_' + detailsId, det.open));
+    const meta = (text, cls) => {
+        $(countId).textContent = String(box.querySelectorAll('div:not(.empty)').length);
+        $(lastId).textContent = text;
+        $(lastId).dataset.kind = cls || '';
+    };
+    const clear = () => { box.replaceChildren(el('div', 'empty', emptyText)); meta(emptyText, ''); };
+    // the Clear button sits inside the <summary>: do not let that click open / close the log
+    $(clearId).addEventListener('click', (e) => { e.preventDefault(); e.stopPropagation(); clear(); });
+    clear();
+    return {
+        add(text, cls, stamp) {
+            const empty = box.querySelector('.empty');
+            if (empty) empty.remove();
+            const line = el('div', cls || '');
+            line.appendChild(el('span', 't', stamp));
+            line.appendChild(document.createTextNode(text));
+            box.appendChild(line);
+            box.scrollTop = box.scrollHeight;
+            meta(text, cls);
+        },
+    };
+}
 
 // true while the user is typing / choosing in a form control (keyboard timer shortcuts stay out of the way)
 function isTyping(t) {
@@ -100,11 +148,12 @@ function toast(title, msg, actionLabel, action, ms, tag) {
 // The run being tracked lives in this browser (localStorage), so a refresh mid-run
 // loses nothing. It is sent to the server only when finalised.
 function newRun(team, category) {
-    return { team: team || '', category: category || 'slam', running: false, startedAt: 0, elapsedMs: 0, epochStart: 0,
+    return { team: team || '', category: category || 'nav2', running: false, startedAt: 0, elapsedMs: 0, epochStart: 0,
              displayed: '',
              loadedMs: null, stoppedMs: null, notes: '' };
 }
 let run = Object.assign(newRun(), store.get('dojoRun', {}));
+if (run.category !== 'nav2' && run.category !== 'autonomy') run.category = 'nav2';      // a run saved while SLAM existed
 const runListeners = [];
 function onRun(fn) { runListeners.push(fn); }
 function saveRun() { store.set('dojoRun', run); runListeners.forEach((fn) => fn()); }
@@ -263,7 +312,8 @@ const elapsed = () => (run.running ? Date.now() - run.startedAt : run.elapsedMs)
 // ======================================================================
 (function () {
     let comp = { teams: [], runs: [], current: null };
-    let sortKey = store.get('dojoSbSort', 'autonomy');      // 'team' | 'slam' | 'nav2' | 'autonomy'
+    let sortKey = store.get('dojoSbSort', 'autonomy');      // 'team' | 'nav2' | 'autonomy'
+    if (!['team', 'nav2', 'autonomy'].includes(sortKey)) sortKey = 'autonomy';     // was 'slam'
 
     window.pushCurrent = () => {
         api('/api/competition/current', { team: run.team, running: run.running, category: run.category,
@@ -272,6 +322,7 @@ const elapsed = () => (run.running ? Date.now() - run.startedAt : run.elapsedMs)
 
     async function load() {
         try { comp = await api('/api/competition'); } catch (e) { return; }
+        comp.runs = (comp.runs || []).filter(isShown);          // SLAM runs saved earlier stay in the data file, hidden here
         render();
     }
     window.competitionRefresh = load;
@@ -341,7 +392,7 @@ const elapsed = () => (run.running ? Date.now() - run.startedAt : run.elapsedMs)
         tb.replaceChildren();
         if (!list.length) {
             const td = el('td', 'empty', 'No teams yet.');
-            td.colSpan = 4;
+            td.colSpan = 3;
             tb.appendChild(el('tr')).appendChild(td);
         }
         list.forEach((row) => {
@@ -409,8 +460,12 @@ const elapsed = () => (run.running ? Date.now() - run.startedAt : run.elapsedMs)
     function renderNowPlaying() {
         const box = $('now-playing');
         box.replaceChildren();
-        box.hidden = !run.team;
-        if (!run.team) return;
+        box.classList.toggle('empty', !run.team);
+        if (!run.team) {
+            box.appendChild(el('div', 'now-team', 'No team selected'));
+            box.appendChild(el('div', 'now-meta', 'Pick a team above to get ready'));
+            return;
+        }
         box.appendChild(el('div', 'now-team', run.team));
         const state = run.running ? 'Running' : run.elapsedMs ? `Stopped at ${fmt(run.elapsedMs)}` : 'Ready to start';
         box.appendChild(el('div', 'now-meta', `${catLabel(run.category)} · ${state}`));
@@ -418,9 +473,12 @@ const elapsed = () => (run.running ? Date.now() - run.startedAt : run.elapsedMs)
 
     function renderCat() {
         $('cat-seg').querySelectorAll('.seg-btn').forEach((b) => {
-            b.classList.toggle('active', b.dataset.cat === run.category);
+            const on = b.dataset.cat === run.category;
+            b.classList.toggle('active', on);
+            b.setAttribute('aria-checked', String(on));
             b.disabled = run.running;
         });
+        $('cat-hint').hidden = !run.running;       // the buttons are locked while timing, so say so
     }
 
     function render() { renderTeams(); renderScoreboard(); renderNowPlaying(); renderCat(); }
@@ -479,6 +537,7 @@ const elapsed = () => (run.running ? Date.now() - run.startedAt : run.elapsedMs)
     let screenShown = 'logo';
 
     function setStatus(t) { $('status').textContent = t; }
+    fitBox($('stream-stage'), $('stream-box'), 1024 / 600);       // the Pi screen is 1024 x 600
 
     // ---- live feed of the Pi screen.
     // The feed stays connected the whole time (no black flash when you scroll back). It comes through this
@@ -486,6 +545,9 @@ const elapsed = () => (run.running ? Date.now() - run.startedAt : run.elapsedMs)
     // Pi's own stream if the relay keeps failing. A fresh connection is opened (and swapped in once its first
     // frame is there) after every screen change and whenever the feed drops, so it never needs a page refresh.
     let feed = $('live-stream');
+    const feedBox = $('stream-box');
+    const feedUp = (up) => feedBox.classList.toggle('down', !up);       // hides the browser's broken-image icon while the feed is down
+    feedUp(false);                                                       // until the first frame arrives
     const FEED_RELAY = feed.dataset.src;
     const FEED_DIRECT = feed.dataset.fallback;
     let feedUrl = FEED_RELAY, feedFails = 0, feedGen = 0, feedTimer = null;
@@ -509,6 +571,8 @@ const elapsed = () => (run.running ? Date.now() - run.startedAt : run.elapsedMs)
             old.onload = old.onerror = null;
             old.src = '';                               // drops the old connection (removing the attribute can leave it open)
             feed = next;
+            feedUp(next.naturalWidth > 0);
+            feed.addEventListener('load', () => feedUp(true));
             feed.addEventListener('error', onFeedError);
         };
         next.onload = swap;                             // first frame is in
@@ -524,6 +588,7 @@ const elapsed = () => (run.running ? Date.now() - run.startedAt : run.elapsedMs)
         else { feed.src = ''; setTimeout(() => { if (gen === feedGen) next.src = FEED_DIRECT; }, 50); }
     }
     function onFeedError() {
+        feedUp(false);
         feedFails += 1;
         if (feedFails >= 3) { feedUrl = feedUrl === FEED_RELAY ? FEED_DIRECT : FEED_RELAY; feedFails = 0; }   // relay down: try the Pi directly, and back
         clearTimeout(feedTimer);
@@ -621,20 +686,8 @@ const elapsed = () => (run.running ? Date.now() - run.startedAt : run.elapsedMs)
 
     function setStatus(text) { $('disp-status').textContent = text; }
 
-    function log(text, cls) {
-        const box = $('disp-log');
-        const empty = box.querySelector('.empty');
-        if (empty) empty.remove();
-        const line = el('div', cls || '');
-        const t = run.running ? fmt(elapsed()) : new Date().toLocaleTimeString();
-        line.appendChild(el('span', 't', t));
-        line.appendChild(document.createTextNode(text));
-        box.appendChild(line);
-        box.scrollTop = box.scrollHeight;
-    }
-    function clearLog() { $('disp-log').replaceChildren(el('div', 'empty', 'Station events appear here.')); }
-    $('disp-log-clear').addEventListener('click', clearLog);
-    clearLog();
+    const logger = logBox('disp-logbox', 'disp-log', 'disp-log-count', 'disp-log-last', 'disp-log-clear', 'Station events appear here.');
+    function log(text, cls) { logger.add(text, cls, run.running ? fmt(elapsed()) : new Date().toLocaleTimeString()); }
 
     async function act(label, path, body) {
         setStatus(label);
@@ -760,7 +813,7 @@ const elapsed = () => (run.running ? Date.now() - run.startedAt : run.elapsedMs)
 
     grid.style.gridTemplateColumns = `repeat(${COLS}, 1fr)`;
     grid.style.gridTemplateRows = `repeat(${ROWS}, 1fr)`;
-    grid.style.aspectRatio = `${AREA.x1 - AREA.x0} / ${AREA.y1 - AREA.y0}`;
+    fitBox($('obs-stage'), grid, (AREA.x1 - AREA.x0) / (AREA.y1 - AREA.y0));
     const els = cells.map((cell) => {
         const e = el('div', 'obs-cell');
         e.append(el('span', 'obs-name', cell.name), el('span', 'obs-block'), el('span', 'obs-coord', `x${cell.cx} y${cell.cy}`));
@@ -832,20 +885,9 @@ const elapsed = () => (run.running ? Date.now() - run.startedAt : run.elapsedMs)
     let result = null;          // { kind: 'done'|'fail', text, until } shown for a few seconds after it ends
     let pose = 'extended';      // gate drawing: 'extended' (CLOSED) or 'retracted' (OPEN); kept while FAULT / UNKNOWN
 
-    // ---- log (same look as the station log)
-    function log(text, cls) {
-        const box = $('barrier-log');
-        const empty = box.querySelector('.empty');
-        if (empty) empty.remove();
-        const line = el('div', cls || '');
-        line.appendChild(el('span', 't', run.running ? fmt(elapsed()) : new Date().toLocaleTimeString()));
-        line.appendChild(document.createTextNode(text));
-        box.appendChild(line);
-        box.scrollTop = box.scrollHeight;
-    }
-    function clearLog() { $('barrier-log').replaceChildren(el('div', 'empty', 'Barrier events appear here.')); }
-    $('barrier-log-clear').addEventListener('click', clearLog);
-    clearLog();
+    // ---- log (collapsible, same look as the station log)
+    const logger = logBox('barrier-logbox', 'barrier-log', 'barrier-log-count', 'barrier-log-last', 'barrier-log-clear', 'Barrier events appear here.');
+    function log(text, cls) { logger.add(text, cls, run.running ? fmt(elapsed()) : new Date().toLocaleTimeString()); }
 
     function setStatus(text) { $('barrier-status').textContent = text; }
 
@@ -1046,10 +1088,10 @@ const elapsed = () => (run.running ? Date.now() - run.startedAt : run.elapsedMs)
             });
             if (!r.success) throw new Error(r.message);
             const saved = { team: run.team, cat: catLabel(run.category), time: fmt(run.elapsedMs) };
-            // a team does SLAM, then Nav2, then Behaviour Trees in a row: keep the team and move on to the
+            // a team does Nav2, then Behaviour Trees in a row: keep the team and move on to the
             // next challenge, and only clear the team once Behaviour Trees is done
             const next = NEXT_CHALLENGE[run.category];
-            run = next ? newRun(saved.team, next) : newRun('', 'slam');
+            run = next ? newRun(saved.team, next) : newRun('', 'nav2');
             saveRun();
             window.competitionRefresh();
             window.go('home');
@@ -1060,6 +1102,15 @@ const elapsed = () => (run.running ? Date.now() - run.startedAt : run.elapsedMs)
         }
     };
     $('finalize').addEventListener('click', window.endRun);
+
+    // the End Run section shows what is about to be saved
+    onRun(() => {
+        $('end-team').textContent = run.team || '—';
+        $('end-cat').textContent = run.team ? catLabel(run.category) : '—';
+        $('end-time').textContent = fmt(elapsed());
+        $('finalize').disabled = !run.team || (!run.running && run.elapsedMs <= 0);
+    });
+    setInterval(() => { if (run.running) $('end-time').textContent = fmt(elapsed()); }, 200);
 })();
 
 // ======================================================================
@@ -1082,7 +1133,8 @@ const elapsed = () => (run.running ? Date.now() - run.startedAt : run.elapsedMs)
         applyTheme(document.documentElement.dataset.theme === 'dark' ? 'light' : 'dark'));
 
     // ---- sidebar: jump links into the one continuous page
-    if (mobile() || store.get('dojoNavCollapsed', false)) sidebar.classList.add('collapsed');
+    const savedNav = store.get('dojoNavCollapsed', null);       // null = never chosen: collapse on a narrow window
+    if (mobile() || (savedNav === null ? window.innerWidth < 1150 : savedNav)) sidebar.classList.add('collapsed');
     $('nav-toggle').addEventListener('click', () => {
         sidebar.classList.toggle('collapsed');
         if (!mobile()) store.set('dojoNavCollapsed', sidebar.classList.contains('collapsed'));

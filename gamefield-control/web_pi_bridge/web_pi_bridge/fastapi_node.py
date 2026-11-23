@@ -498,8 +498,9 @@ class TeamIn(BaseModel):
     name: str
 
 
-# challenges that get their own fastest time on the scoreboard (older runs have none = autonomy)
-COMP_CATEGORIES = {'slam': 'SLAM', 'nav2': 'Nav2', 'autonomy': 'Autonomy'}
+# challenges that get their own fastest time on the scoreboard (older runs have none = autonomy).
+# SLAM is no longer a challenge: runs already saved as 'slam' stay in competition.json (the page hides them).
+COMP_CATEGORIES = {'nav2': 'Nav2', 'autonomy': 'Behaviour Trees'}
 
 
 class CurrentRun(BaseModel):
@@ -512,7 +513,7 @@ class CurrentRun(BaseModel):
 
 class RunIn(BaseModel):
     team: str
-    category: str = 'autonomy'    # slam | nav2 | autonomy
+    category: str = 'autonomy'    # nav2 | autonomy (Behaviour Trees)
     elapsed_ms: int = Field(ge=0)
     total: float = 0          # marks were removed from the judges' page; kept so old clients still post
     scores: dict[str, float] = {}
@@ -561,6 +562,8 @@ async def comp_current(c: CurrentRun):
 @comp_router.post('/runs')
 async def comp_add_run(r: RunIn):
     cat = (r.category or '').strip().lower()
+    if cat == 'slam':          # a page that was open before SLAM was removed: refuse rather than file it as another challenge
+        return {'success': False, 'message': 'SLAM is no longer a challenge: reload the page.'}
     if cat not in COMP_CATEGORIES:
         cat = 'autonomy'
     run = _dump(r) | {'id': uuid.uuid4().hex[:8], 'team': _clean_team(r.team) or 'unknown', 'category': cat,
@@ -636,7 +639,17 @@ except Exception:
 
 # Serve CSS/JS assets (and dojo_map.py for teams) from /static
 print(f"STATIC_DIR = {STATIC_DIR}, exists = {os.path.exists(STATIC_DIR)}")
-app.mount("/static", StaticFiles(directory=STATIC_DIR, follow_symlink=True), name="static")
+class RevalidatingStatic(StaticFiles):
+    """StaticFiles that makes the browser re-check (ETag) on every load, so an updated style.css / app.js is used
+    straight away instead of an old copy kept from the last visit (the page looked unstyled until a hard refresh)."""
+
+    async def get_response(self, path, scope):
+        response = await super().get_response(path, scope)
+        response.headers['Cache-Control'] = 'no-cache'
+        return response
+
+
+app.mount("/static", RevalidatingStatic(directory=STATIC_DIR, follow_symlink=True), name="static")
 
 # Organisation logos are bundled with this package (web_pi_bridge/logos). The old
 # location (screen_images package) is still tried last so existing setups keep working.
@@ -668,9 +681,10 @@ async def get_logo(name: str):
 
 @app.get("/", response_class=FileResponse)
 async def get_index():
+    headers = {'Cache-Control': 'no-cache'}
     if not os.path.exists(TEMPLATE_PATH):
-        return FileResponse("index.html")
-    return FileResponse(TEMPLATE_PATH)
+        return FileResponse("index.html", headers=headers)
+    return FileResponse(TEMPLATE_PATH, headers=headers)
 
 
 PI_HOST = os.environ.get('DOJO_PI_HOST', 'screen.local')          # the Pi is found by hostname, never by a stored IP

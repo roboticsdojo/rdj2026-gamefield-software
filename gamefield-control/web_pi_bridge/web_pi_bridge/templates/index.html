@@ -63,7 +63,7 @@
         </div>
 
         <div class="topbar-right">
-            <button class="btn btn-ghost btn-sm" id="sb-toggle" type="button" title="Scoreboard: SLAM, Nav2 and Autonomy times (S)" aria-expanded="false">
+            <button class="btn btn-ghost btn-sm" id="sb-toggle" type="button" title="Scoreboard: Nav2 and Behaviour Trees times (S)" aria-expanded="false">
                 <svg class="ic"><use href="#i-trophy"/></svg><span>Scoreboard</span>
             </button>
             <button class="icon-btn small" id="theme-toggle" title="Light / dark mode" aria-label="Toggle light or dark mode">
@@ -85,19 +85,23 @@
         </nav>
 
         <div class="content">
+            <!-- One continuous page. Every <section> is exactly one window tall (see "fit to the window" in style.css),
+                 so nothing inside a section ever needs scrolling: the sidebar jumps from section to section. -->
             <main class="main" id="main">
 
                 <!-- ===================== SETUP ===================== -->
                 <section class="section" id="sec-home">
-                    <div class="hero">
-                        <img src="/logos/icon.png" alt="Robotics Dojo" class="hero-icon">
-                        <div>
-                            <h1>Robotics Dojo 2026</h1>
-                            <p class="muted">Autonomous waste detection and delivery</p>
+                    <div class="section-head">
+                        <div class="hero">
+                            <img src="/logos/icon.png" alt="Robotics Dojo" class="hero-icon">
+                            <div>
+                                <h1>Robotics Dojo 2026</h1>
+                                <p class="muted">Autonomous waste detection and delivery</p>
+                            </div>
                         </div>
                     </div>
 
-                    <div>
+                    <div class="sec-body cols-2">
                         <div class="card">
                             <h2>Current run</h2>
                             <label class="field">Team
@@ -105,43 +109,41 @@
                                 <select id="team-select" data-teams="Limit breakers; Malkiabots; Asterix; TetsuZakura Knights; NOMAD; jnnp robotics Innovators; Eigen; Auracle; Zingira; Saifee robotics"><option value="">Select a team…</option></select>
                             </label>
                             <div class="field">Challenge
-                                <div class="seg" id="cat-seg" role="group" aria-label="Challenge">
-                                    <button type="button" class="seg-btn active" data-cat="slam">SLAM</button>
-                                    <button type="button" class="seg-btn" data-cat="nav2">Nav2</button>
-                                    <button type="button" class="seg-btn" data-cat="autonomy">Behaviour Trees</button>
+                                <div class="seg" id="cat-seg" role="radiogroup" aria-label="Challenge">
+                                    <button type="button" class="seg-btn active" role="radio" aria-checked="true" data-cat="nav2">Nav2</button>
+                                    <button type="button" class="seg-btn" role="radio" aria-checked="false" data-cat="autonomy">Behaviour Trees</button>
                                 </div>
+                                <span class="field-hint" id="cat-hint" hidden>Locked while the timer is running.</span>
                             </div>
-                            <div class="now-playing" id="now-playing">
-                            </div>
-                            <div class="row">
-                                <button class="btn btn-go btn-lg" id="home-start"><svg class="ic"><use href="#i-play"/></svg>Start run</button>
-                                <button class="btn btn-ghost" id="home-reset" title="Discard the run being scored"><svg class="ic"><use href="#i-reset"/></svg>Discard run</button>
-                            </div>
-                            <details class="mini">
-                                <summary>Manage teams</summary>
+                            <div class="now-playing" id="now-playing"></div>
+                            <div class="card-foot">
                                 <div class="row">
-                                    <input id="team-new" type="text" maxlength="32" placeholder="New team name">
-                                    <button class="btn btn-primary" id="team-add">Add</button>
+                                    <button class="btn btn-go btn-lg" id="home-start"><svg class="ic"><use href="#i-play"/></svg>Start run</button>
+                                    <button class="btn btn-ghost" id="home-reset" title="Discard the run being scored"><svg class="ic"><use href="#i-reset"/></svg>Discard run</button>
                                 </div>
-                                <div id="team-list" class="team-list"></div>
-                            </details>
+                                <details class="mini">
+                                    <summary>Manage teams</summary>
+                                    <div class="row">
+                                        <input id="team-new" type="text" maxlength="32" placeholder="New team name">
+                                        <button class="btn btn-primary" id="team-add">Add</button>
+                                    </div>
+                                    <div id="team-list" class="team-list"></div>
+                                </details>
+                            </div>
                         </div>
-                    </div>
 
-                    <div class="card">
-                        <div class="card-head">
-                            <h2>Run log</h2>
-                            <span class="muted small">Fastest times per challenge are on the Scoreboard in the top bar</span>
-                        </div>
-                        <details class="mini">
-                            <summary>All runs</summary>
-                            <div class="table-wrap">
+                        <div class="card">
+                            <div class="card-head">
+                                <h2>Run log</h2>
+                                <span class="muted small">Fastest times are on the Scoreboard in the top bar</span>
+                            </div>
+                            <div class="table-wrap grow-y">
                                 <table class="table" id="runs-table">
                                     <thead><tr><th>When</th><th>Team</th><th>Challenge</th><th class="num">Time</th><th>Detection</th><th></th></tr></thead>
                                     <tbody></tbody>
                                 </table>
                             </div>
-                        </details>
+                        </div>
                     </div>
                 </section>
 
@@ -152,20 +154,28 @@
                         <span class="pill" id="screen-shown">Screen: logo</span>
                     </div>
 
-                    <div>
+                    <div class="sec-body cols-stream">
                         <div class="card">
                             <h2>Screen stream</h2>
-                            <div class="media">
-                                <img id="live-stream" data-src="/api/screen_stream" data-fallback="http://screen.local:8080/stream" alt="Gamefield screen feed">
+                            <!-- the stream box is sized in JS (fitBox) to the largest 1024:600 rectangle that fits -->
+                            <div class="stage" id="stream-stage">
+                                <div class="fit media" id="stream-box" role="img" aria-label="Gamefield screen feed">
+                                    <span class="media-wait">Waiting for the screen feed…</span>
+                                    <img id="live-stream" data-src="/api/screen_stream" data-fallback="http://screen.local:8080/stream" alt="">
+                                </div>
                             </div>
+                        </div>
+
+                        <div class="card">
+                            <h2>Show on screen</h2>
                             <div class="class-buttons" id="class-buttons">
                                 <button class="class-btn cls-organic" data-cat="organic">Organic</button>
                                 <button class="class-btn cls-metal" data-cat="other">Metal</button>
                                 <button class="class-btn cls-plastic" data-cat="plastic">Plastic</button>
                             </div>
                             <div class="row">
-                                <button class="btn btn-ghost" id="screen-random"><svg class="ic"><use href="#i-shuffle"/></svg>Random class</button>
-                                <button class="btn btn-ghost" id="screen-logo">Revert to logo</button>
+                                <button class="btn btn-ghost grow" id="screen-random"><svg class="ic"><use href="#i-shuffle"/></svg>Random class</button>
+                                <button class="btn btn-ghost grow" id="screen-logo">Revert to logo</button>
                             </div>
                             <div class="status" id="status">Ready</div>
                         </div>
@@ -182,31 +192,40 @@
                         </div>
                     </div>
 
-                    <div class="card">
-                        <div class="card-head">
-                            <h2>Stations</h2>
-                            <div class="row">
-                                <button id="disp-enable" class="btn btn-ghost btn-sm">Disable</button>
-                                <button id="disp-home" class="btn btn-ghost btn-sm">Home</button>
-                                <button id="disp-reset" class="btn btn-ghost btn-sm">Reset</button>
+                    <div class="sec-body">
+                        <div class="card grow-y">
+                            <div class="card-head">
+                                <h2>Stations</h2>
+                                <div class="row">
+                                    <button id="disp-enable" class="btn btn-ghost btn-sm">Disable</button>
+                                    <button id="disp-home" class="btn btn-ghost btn-sm">Home</button>
+                                    <button id="disp-reset" class="btn btn-ghost btn-sm">Reset</button>
+                                </div>
                             </div>
+                            <p class="muted small card-note" id="disp-expected">Expected station follows the class on the screen.</p>
+                            <div class="stations">
+                                <div class="station" data-station="1"></div>
+                                <div class="station" data-station="2"></div>
+                                <div class="station" data-station="3"></div>
+                            </div>
+                            <div class="disp-progress">
+                                <span id="disp-goal">No dispense yet</span>
+                                <button id="disp-cancel" class="btn btn-stop btn-sm" disabled>Cancel</button>
+                            </div>
+                            <div class="status" id="disp-status">Ready</div>
                         </div>
-                        <p class="muted small" id="disp-expected">Expected station follows the class on the screen.</p>
-                        <div class="stations">
-                            <div class="station" data-station="1"></div>
-                            <div class="station" data-station="2"></div>
-                            <div class="station" data-station="3"></div>
-                        </div>
-                        <div class="disp-progress">
-                            <span id="disp-goal">No dispense yet</span>
-                            <button id="disp-cancel" class="btn btn-stop btn-sm" disabled>Cancel</button>
-                        </div>
-                        <div class="status" id="disp-status">Ready</div>
-                    </div>
 
-                    <div class="card">
-                        <div class="card-head"><h2>Station log</h2><button class="btn btn-ghost btn-sm" id="disp-log-clear">Clear</button></div>
-                        <div class="log" id="disp-log"></div>
+                        <!-- collapsible, but always there: the bar shows the newest line even when closed -->
+                        <details class="logbox" id="disp-logbox">
+                            <summary>
+                                <svg class="ic chev"><use href="#i-chevron"/></svg>
+                                <span class="logbox-title">Station log</span>
+                                <span class="logbox-count" id="disp-log-count">0</span>
+                                <span class="logbox-last" id="disp-log-last">Station events appear here.</span>
+                                <button class="btn btn-ghost btn-sm" id="disp-log-clear" type="button">Clear</button>
+                            </summary>
+                            <div class="log" id="disp-log"></div>
+                        </details>
                     </div>
                 </section>
 
@@ -214,14 +233,15 @@
                 <section class="section" id="sec-obstacles">
                     <div class="section-head">
                         <h1><span class="step">3</span>Dynamic Obstacles</h1>
-                        <div class="row">
-                            <button class="btn btn-primary" id="obs-random"><svg class="ic"><use href="#i-shuffle"/></svg>Randomise</button>
-                        </div>
+                        <button class="btn btn-primary" id="obs-random"><svg class="ic"><use href="#i-shuffle"/></svg>Randomise</button>
                     </div>
-                    <div class="card">
-                        <h2>Grid Layout</h2>
-                        <div class="obs-grid-wrap"><div id="obs-grid" class="obs-grid"></div></div>
-                        <div class="status" id="obs-status">Press Randomise</div>
+                    <div class="sec-body">
+                        <div class="card grow-y">
+                            <h2>Grid Layout</h2>
+                            <!-- the grid is sized in JS (fitBox) to the largest rectangle of the field's shape that fits -->
+                            <div class="stage" id="obs-stage"><div id="obs-grid" class="obs-grid fit"></div></div>
+                            <div class="status" id="obs-status">Press Randomise</div>
+                        </div>
                     </div>
                 </section>
 
@@ -232,73 +252,79 @@
                         <h1><span class="step">4</span>Barrier</h1>
                     </div>
 
-                    <div class="grid-2">
-                        <!-- AUTOMATIC: the Arduino's own sequence. Steps light up one after another as it runs. -->
-                        <div class="card auto-card">
-                            <div class="card-head">
-                                <h2>Automatic</h2>
-                                <span id="auto-badge" class="badge badge-offline">OFFLINE</span>
+                    <div class="sec-body">
+                        <div class="grid-2 grow-y">
+                            <!-- AUTOMATIC: the Arduino's own sequence. Steps light up one after another as it runs. -->
+                            <div class="card auto-card">
+                                <div class="card-head">
+                                    <h2>Automatic</h2>
+                                    <span id="auto-badge" class="badge badge-offline">OFFLINE</span>
+                                </div>
+                                <p class="muted small card-note">Ultrasonic detects the robot, then the barrier closes and opens by itself.</p>
+                                <div class="auto-steps" id="auto-steps">
+                                    <div class="auto-step" id="step-detect" data-status="off">
+                                        <span class="num">1</span><b>Ultrasonic detect</b><span class="sub">Sensor offline</span>
+                                    </div>
+                                    <div class="auto-step" id="step-a" data-status="pending">
+                                        <span class="num">2</span><b>Close</b><span class="sub"></span>
+                                    </div>
+                                    <div class="auto-step" id="step-b" data-status="pending">
+                                        <span class="num">3</span><b>Open</b><span class="sub"></span>
+                                    </div>
+                                </div>
+                                <div class="auto-banner" id="auto-banner" data-kind="offline">Waiting for the barrier controller…</div>
                             </div>
-                            <p class="muted small card-note">Ultrasonic detects the robot, then the barrier closes and opens by itself.</p>
-                            <div class="auto-steps" id="auto-steps">
-                                <div class="auto-step" id="step-detect" data-status="off">
-                                    <span class="num">1</span><b>Ultrasonic detect</b><span class="sub">Sensor offline</span>
+
+                            <!-- MANUAL: fallback if the ultrasonic fails -->
+                            <div class="card manual-card">
+                                <div class="card-head">
+                                    <h2>Manual</h2>
+                                    <div class="row">
+                                        <span id="gate-badge" class="badge badge-offline">OFFLINE</span>
+                                        <button class="btn btn-ghost btn-sm" id="barrier-reset" type="button" title="Clear a fault and re-initialise the barrier" disabled>Reset</button>
+                                    </div>
                                 </div>
-                                <span class="auto-arrow" aria-hidden="true">&rarr;</span>
-                                <div class="auto-step" id="step-a" data-status="pending">
-                                    <span class="num">2</span><b>Close</b><span class="sub"></span>
+                                <p class="muted small card-note">Fallback if the ultrasonic fails. A manual command cancels a running automatic sequence.</p>
+                                <!-- Side view of the mechanism: servo + crank slider push the arm out of the housing (CLOSED)
+                                     or pull it back in (OPEN). The two circles on the housing are the ultrasonic sensor. -->
+                                <div class="gate" id="gate" data-pose="extended" data-known="false">
+                                    <svg viewBox="0 0 240 130" role="img" aria-label="Barrier gate: sliding arm">
+                                        <defs>
+                                            <pattern id="gate-stripes" width="28" height="14" patternUnits="userSpaceOnUse"><rect width="14" height="14" fill="#ff7d00"/><rect x="14" width="14" height="14" fill="#ffffff"/></pattern>
+                                            <clipPath id="gate-clip"><rect x="10" y="0" width="230" height="130"/></clipPath>
+                                        </defs>
+                                        <rect class="gate-ground" x="8" y="112" width="224" height="6" rx="3"/>
+                                        <rect class="gate-rest" x="214" y="68" width="10" height="44" rx="2"/>
+                                        <g clip-path="url(#gate-clip)"><g class="gate-arm"><rect x="30" y="74" width="176" height="12" rx="2" fill="url(#gate-stripes)"/></g></g>
+                                        <rect class="gate-post" x="10" y="20" width="64" height="92" rx="4"/>
+                                        <rect class="gate-sensor" x="22" y="30" width="40" height="20" rx="3"/>
+                                        <circle class="gate-eye" cx="32" cy="40" r="5"/><circle class="gate-eye" cx="52" cy="40" r="5"/>
+                                    </svg>
                                 </div>
-                                <span class="auto-arrow" aria-hidden="true">&rarr;</span>
-                                <div class="auto-step" id="step-b" data-status="pending">
-                                    <span class="num">3</span><b>Open</b><span class="sub"></span>
+                                <div class="gate-actions">
+                                    <button class="btn btn-go btn-lg" id="barrier-open" type="button" disabled>Open</button>
+                                    <button class="btn btn-stop btn-lg" id="barrier-close" type="button" disabled>Close</button>
                                 </div>
+                                <div class="gate-info">
+                                    <div><span class="muted small">Servo angle</span><b id="gate-angle">—</b></div>
+                                    <div><span class="muted small">Manual knob</span><b id="gate-pot">—</b></div>
+                                    <div><span class="muted small">Fault</span><b id="gate-fault">—</b></div>
+                                </div>
+                                <p class="gate-hint" id="gate-hint" hidden></p>
+                                <div class="status" id="barrier-status">Ready</div>
                             </div>
-                            <div class="auto-banner" id="auto-banner" data-kind="offline">Waiting for the barrier controller…</div>
                         </div>
 
-                        <!-- MANUAL: fallback if the ultrasonic fails -->
-                        <div class="card">
-                            <div class="card-head">
-                                <h2>Manual</h2>
-                                <div class="row">
-                                    <span id="gate-badge" class="badge badge-offline">OFFLINE</span>
-                                    <button class="btn btn-ghost btn-sm" id="barrier-reset" type="button" title="Clear a fault and re-initialise the barrier" disabled>Reset</button>
-                                </div>
-                            </div>
-                            <p class="muted small card-note">Fallback if the ultrasonic fails. A manual command cancels a running automatic sequence.</p>
-                            <!-- Side view of the mechanism: servo + crank slider push the arm out of the housing (CLOSED)
-                                 or pull it back in (OPEN). The two circles on the housing are the ultrasonic sensor. -->
-                            <div class="gate" id="gate" data-pose="extended" data-known="false">
-                                <svg viewBox="0 0 240 130" role="img" aria-label="Barrier gate: sliding arm">
-                                    <defs>
-                                        <pattern id="gate-stripes" width="28" height="14" patternUnits="userSpaceOnUse"><rect width="14" height="14" fill="#ff7d00"/><rect x="14" width="14" height="14" fill="#ffffff"/></pattern>
-                                        <clipPath id="gate-clip"><rect x="10" y="0" width="230" height="130"/></clipPath>
-                                    </defs>
-                                    <rect class="gate-ground" x="8" y="112" width="224" height="6" rx="3"/>
-                                    <rect class="gate-rest" x="214" y="68" width="10" height="44" rx="2"/>
-                                    <g clip-path="url(#gate-clip)"><g class="gate-arm"><rect x="30" y="74" width="176" height="12" rx="2" fill="url(#gate-stripes)"/></g></g>
-                                    <rect class="gate-post" x="10" y="20" width="64" height="92" rx="4"/>
-                                    <rect class="gate-sensor" x="22" y="30" width="40" height="20" rx="3"/>
-                                    <circle class="gate-eye" cx="32" cy="40" r="5"/><circle class="gate-eye" cx="52" cy="40" r="5"/>
-                                </svg>
-                            </div>
-                            <div class="gate-actions">
-                                <button class="btn btn-go btn-lg" id="barrier-open" type="button" disabled>Open</button>
-                                <button class="btn btn-stop btn-lg" id="barrier-close" type="button" disabled>Close</button>
-                            </div>
-                            <div class="gate-info">
-                                <div><span class="muted small">Servo angle</span><b id="gate-angle">—</b></div>
-                                <div><span class="muted small">Manual knob</span><b id="gate-pot">—</b></div>
-                                <div><span class="muted small">Fault</span><b id="gate-fault">—</b></div>
-                            </div>
-                            <p class="gate-hint" id="gate-hint" hidden></p>
-                            <div class="status" id="barrier-status">Ready</div>
-                        </div>
-                    </div>
-
-                    <div class="card">
-                        <div class="card-head"><h2>Barrier log</h2><button class="btn btn-ghost btn-sm" id="barrier-log-clear">Clear</button></div>
-                        <div class="log log-short" id="barrier-log"></div>
+                        <details class="logbox" id="barrier-logbox">
+                            <summary>
+                                <svg class="ic chev"><use href="#i-chevron"/></svg>
+                                <span class="logbox-title">Barrier log</span>
+                                <span class="logbox-count" id="barrier-log-count">0</span>
+                                <span class="logbox-last" id="barrier-log-last">Barrier events appear here.</span>
+                                <button class="btn btn-ghost btn-sm" id="barrier-log-clear" type="button">Clear</button>
+                            </summary>
+                            <div class="log" id="barrier-log"></div>
+                        </details>
                     </div>
                 </section>
 
@@ -307,8 +333,15 @@
                     <div class="section-head">
                         <h1><span class="step">5</span>End Run</h1>
                     </div>
-                    <div class="card">
-                        <button class="btn btn-accent btn-lg full" id="finalize"><svg class="ic"><use href="#i-check"/></svg>End run</button>
+                    <div class="sec-body center">
+                        <div class="card end-card">
+                            <div class="end-summary" id="end-summary">
+                                <div><span class="muted small">Team</span><b id="end-team">—</b></div>
+                                <div><span class="muted small">Challenge</span><b id="end-cat">—</b></div>
+                                <div><span class="muted small">Time</span><b id="end-time">00:00.0</b></div>
+                            </div>
+                            <button class="btn btn-accent btn-lg full" id="finalize" disabled><svg class="ic"><use href="#i-check"/></svg>End run</button>
+                        </div>
                     </div>
                 </section>
             </main>
@@ -325,10 +358,10 @@
         <div class="tfs-top">
             <div class="tfs-id">
                 <span class="team-chip" id="tfs-team">No team</span>
-                <span class="pill" id="tfs-cat">Autonomy</span>
+                <span class="pill" id="tfs-cat">Behaviour Trees</span>
                 <span class="pill" id="tfs-stage">Setup</span>
             </div>
-            <div class="row tfs-tools">
+            <div class="tfs-tools">
                 <button class="btn btn-ghost btn-sm" id="tfs-screen" type="button" title="Use the whole monitor (browser full screen)"><svg class="ic"><use href="#i-expand"/></svg><span>Full monitor</span></button>
                 <button class="btn btn-ghost btn-sm" id="tfs-collapse" type="button" title="Collapse (F or Esc)"><svg class="ic"><use href="#i-shrink"/></svg><span>Collapse</span></button>
             </div>
@@ -354,7 +387,6 @@
             <table class="table sb-table" id="scoreboard">
                 <thead><tr>
                     <th><button type="button" class="sort" data-sort="team">Team</button></th>
-                    <th class="num"><button type="button" class="sort" data-sort="slam">SLAM</button></th>
                     <th class="num"><button type="button" class="sort" data-sort="nav2">Nav2</button></th>
                     <th class="num"><button type="button" class="sort" data-sort="autonomy">Behaviour Trees</button></th>
                 </tr></thead>
